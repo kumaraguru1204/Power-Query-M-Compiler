@@ -1,0 +1,19 @@
+[package]
+name = "pq_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pq_grammar     = { path = "../pq_grammar"     }
+pq_types       = { path = "../pq_types"       }
+pq_diagnostics = { path = "../pq_diagnostics" }
+pq_lexer       = { path = "../pq_lexer"       }
+pq_ast         = { path = "../pq_ast"         }
+pq_parser      = { path = "../pq_parser"      }
+pq_pipeline    = { path = "../pq_pipeline"    }
+pq_resolver    = { path = "../pq_resolver"    }
+pq_typechecker = { path = "../pq_typechecker" }
+pq_formatter   = { path = "../pq_formatter"   }
+pq_executor    = { path = "../pq_executor"    }
+pq_sql         = { path = "../pq_sql"         }
+serde_json     = "1"

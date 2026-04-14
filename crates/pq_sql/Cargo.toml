@@ -9,3 +9,7 @@ pq_grammar  = { path = "../pq_grammar"  }
 pq_pipeline = { path = "../pq_pipeline" }
 pq_types    = { path = "../pq_types"    }
 
+[dev-dependencies]
+pq_lexer  = { path = "../pq_lexer"  }
+pq_parser = { path = "../pq_parser" }
+

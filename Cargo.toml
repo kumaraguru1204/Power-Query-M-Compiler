@@ -1,0 +1,55 @@
+[workspace]
+members = [
+    "crates/pq_grammar",
+    "crates/pq_types",
+    "crates/pq_diagnostics",
+    "crates/pq_lexer",
+    "crates/pq_ast",
+    "crates/pq_parser",
+    "crates/pq_pipeline",
+    "crates/pq_resolver",
+    "crates/pq_typechecker",
+    "crates/pq_formatter",
+    "crates/pq_executor",
+    "crates/pq_sql",
+    "crates/pq_engine",
+]
+resolver = "2"
+
+[package]
+name = "M_Engine"
+version = "0.1.0"
+edition = "2021"
+default-run = "M_Engine" 
+
+[lib]
+name = "m_engine"
+path = "src/lib.rs"
+
+[dependencies]
+pq_engine      = { path = "crates/pq_engine"      }
+pq_formatter   = { path = "crates/pq_formatter"   }
+pq_diagnostics = { path = "crates/pq_diagnostics" }
+
+# Web server
+actix-web = "4.4"
+actix-rt = "2.9"
+actix-cors = "0.7"
+actix-files = "0.6"
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+[[bin]]
+name = "cli"
+path = "src/bin/cli.rs"
+
+[[bin]]
+name = "web"
+path = "src/bin/web.rs"

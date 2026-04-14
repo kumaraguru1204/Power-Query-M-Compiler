@@ -1,0 +1,14 @@
+[package]
+name = "pq_formatter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pq_ast      = { path = "../pq_ast"      }
+pq_types    = { path = "../pq_types"    }
+pq_pipeline = { path = "../pq_pipeline" }
+pq_grammar  = { path = "../pq_grammar"  }
+
+[dev-dependencies]
+pq_lexer  = { path = "../pq_lexer"  }
+pq_parser = { path = "../pq_parser" }

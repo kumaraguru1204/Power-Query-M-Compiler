@@ -1,0 +1,9 @@
+[package]
+name = "pq_ast"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pq_types       = { path = "../pq_types"       }
+pq_diagnostics = { path = "../pq_diagnostics" }
+pq_grammar     = { path = "../pq_grammar"     }

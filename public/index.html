@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M Engine Playground</title>
+    <link rel="icon" type="image/svg+xml" href="/zpq-logo.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <style>
+        :root {
+            --bg: #08111f;
+            --bg-accent: #0d1b2f;
+            --panel: rgba(9, 18, 31, 0.78);
+            --panel-strong: rgba(12, 24, 41, 0.92);
+            --panel-soft: rgba(17, 32, 54, 0.72);
+            --border: rgba(139, 170, 213, 0.16);
+            --border-strong: rgba(139, 170, 213, 0.24);
+            --text: #e7edf7;
+            --muted: #93a5bf;
+            --muted-strong: #b8c6db;
+            --accent: #56c2ff;
+            --accent-strong: #2f9fff;
+            --success: #5fe0a5;
+            --error: #ff8f85;
+            --shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+            --radius-lg: 24px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            min-height: 100vh;
+            padding: 22px;
+            font-family: 'Manrope', 'Segoe UI', sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(86, 194, 255, 0.16), transparent 30%),
+                radial-gradient(circle at bottom right, rgba(86, 194, 255, 0.10), transparent 26%),
+                linear-gradient(160deg, var(--bg) 0%, var(--bg-accent) 100%);
+            color: var(--text);
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+            background-size: 72px 72px;
+            mask-image: radial-gradient(circle at center, black, transparent 82%);
+            pointer-events: none;
+        }
+
+        .app-shell {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            min-height: calc(100vh - 44px);
+        }
+        
+        .header {
+            background: var(--panel);
+            backdrop-filter: blur(22px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            box-shadow: var(--shadow);
+        }
+        
+        .header-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .eyebrow {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        .header h1 {
+            font-size: clamp(26px, 3vw, 34px);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1;
+        }
+
+        .header-subtitle {
+            color: var(--muted);
+            font-size: 14px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 11px 16px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #06101d;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+            box-shadow: 0 10px 30px rgba(47, 159, 255, 0.24);
+        }
+        
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 36px rgba(47, 159, 255, 0.30);
+        }
+        
+        button:disabled {
+            background: rgba(88, 101, 124, 0.34);
+            color: rgba(231, 237, 247, 0.52);
+            box-shadow: none;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        button.secondary {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--muted-strong);
+            border-color: var(--border-strong);
+            box-shadow: none;
+        }
+        
+        button.secondary:hover {
+            background: rgba(255, 255, 255, 0.07);
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+            gap: 18px;
+            flex: 1;
+        }
+        
+        .panel {
+            background: var(--panel);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            min-height: 0;
+        }
+        
+        .panel-title {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 18px 20px 14px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text);
+        }
+        
+        .panel-kicker {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .panel-note {
+            font-size: 12px;
+            color: var(--muted);
+        }
+        
+        #editor {
+            flex: 1;
+            overflow: hidden;
+            min-height: 420px;
+        }
+        
+        .output {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        
+        .tabs {
+            display: flex;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border);
+            gap: 8px;
+            padding: 12px 16px 0;
+            flex-wrap: wrap;
+        }
+        
+        .tab {
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 999px;
+            box-shadow: none;
+            transform: none;
+        }
+        
+        .tab:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text);
+        }
+        
+        .tab.active {
+            border-color: rgba(86, 194, 255, 0.26);
+            background: rgba(86, 194, 255, 0.12);
+            color: var(--text);
+        }
+        
+        .tab-content {
+            display: none;
+            flex: 1;
+            overflow-y: auto;
+            padding: 18px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .output-section {
+            margin-bottom: 18px;
+        }
+        
+        .output-section h3 {
+            color: var(--muted-strong);
+            margin-bottom: 10px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        
+        .output-content {
+            background: var(--panel-strong);
+            padding: 16px;
+            border-radius: var(--radius-md);
+            font-family: 'IBM Plex Mono', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            border: 1px solid var(--border);
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-x: auto;
+        }
+        
+        .error {
+            color: var(--error);
+        }
+        
+        .error-content {
+            background: rgba(255, 143, 133, 0.08);
+            border: 1px solid rgba(255, 143, 133, 0.18);
+            padding: 14px 16px;
+            margin: 8px 0;
+            border-radius: var(--radius-sm);
+            color: var(--muted-strong);
+        }
+        
+        .success {
+            color: var(--success);
+        }
+        
+        .success-content {
+            background: rgba(95, 224, 165, 0.08);
+            border: 1px solid rgba(95, 224, 165, 0.18);
+            padding: 14px 16px;
+            margin: 8px 0;
+            border-radius: var(--radius-sm);
+        }
+        
+        .loading {
+            color: var(--accent);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-top: 6px;
+            width: fit-content;
+            border: 1px solid transparent;
+        }
+        
+        .status-badge.ready {
+            background: rgba(95, 224, 165, 0.10);
+            color: var(--success);
+            border-color: rgba(95, 224, 165, 0.20);
+        }
+        
+        .status-badge.compiling {
+            background: rgba(86, 194, 255, 0.12);
+            color: var(--accent);
+            border-color: rgba(86, 194, 255, 0.20);
+        }
+        
+        .status-badge.error {
+            background: rgba(255, 143, 133, 0.10);
+            color: var(--error);
+            border-color: rgba(255, 143, 133, 0.20);
+        }
+        
+        .error-line {
+            margin: 10px 0;
+            padding: 14px 16px;
+            background: rgba(255, 143, 133, 0.08);
+            border: 1px solid rgba(255, 143, 133, 0.18);
+            border-radius: var(--radius-md);
+        }
+        
+        .error-line strong {
+            color: var(--error);
+        }
+        
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .hint {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        @media (max-width: 980px) {
+            body {
+                padding: 14px;
+            }
+
+            .header {
+                padding: 18px;
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .container {
+                grid-template-columns: 1fr;
+            }
+
+            #editor {
+                min-height: 360px;
+            }
+        }
+
+        /* Hide debug tab by default */
+        [data-tab="debug"] {
+            display: none;
+        }
+        
+        [data-tab="debug"].visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+    <div class="header">
+        <div class="header-copy">
+            <span class="eyebrow">Power Query Playground</span>
+            <h1>ZPQ Engine</h1>
+            <p class="header-subtitle">Write, compile, inspect errors, and review generated output in one workspace.</p>
+            <span class="status-badge ready" id="statusBadge">Ready</span>
+        </div>
+        <div class="controls">
+            <button id="compileBtn">Compile</button>
+            <button id="debugBtn" class="secondary" title="Show AST and tokens">Debug</button>
+            <button id="clearBtn" class="secondary">Clear</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <!-- Editor Panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <div>
+                    <span class="panel-kicker">Editor</span>
+                    <span>Formula Surface</span>
+                </div>
+                <!-- <span class="panel-note">Ctrl+Enter to compile</span> -->
+            </div>
+            <div id="editor"></div>
+        </div>
+        
+        <!-- Output Panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <div>
+                    <span class="panel-kicker">Output</span>
+                    <span>Result Workspace</span>
+                </div>
+            </div>
+            <div class="tabs">
+                <button class="tab active" data-tab="output">Output</button>
+                <button class="tab" data-tab="formatted">Formatted</button>
+                <button class="tab" data-tab="sql">SQL</button>
+                <button class="tab" data-tab="debug" title="Debug info (AST, tokens)">Debug</button>
+            </div>
+            <div class="output">
+                <!-- Output/Result Tab -->
+                <div id="output" class="tab-content active">
+                    <div class="output-section">
+                        <p class="hint">Compile the current formula to see results or errors.</p>
+                    </div>
+                </div>
+                
+                <!-- Formatted Tab -->
+                <div id="formatted" class="tab-content">
+                    <div class="output-section">
+                        <p class="hint">Formatted code will appear here</p>
+                    </div>
+                </div>
+                
+                <!-- SQL Tab -->
+                <div id="sql" class="tab-content">
+                    <div class="output-section">
+                        <p class="hint">Generated SQL will appear here</p>
+                    </div>
+                </div>
+                
+                <!-- Debug Tab -->
+                <div id="debug" class="tab-content">
+                    <div class="output-section">
+                        <p class="hint">Enable with Debug button to see AST and tokens</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor.main.min.js"></script>
+    <script>
+        require.config({ 
+            paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } 
+        });
+        
+        let editor;
+        let debugMode = false;
+        let lastCompileResult = null;
+        
+        require(['vs/editor/editor.main'], function() {
+            editor = monaco.editor.create(document.getElementById('editor'), {
+                value: `let
+    Source = Excel.Workbook(File.Contents("data.xlsx"), null, true),
+    Filtered = Table.SelectRows(Source, each [Age] > 25)
+in
+    Filtered`,
+                language: 'plaintext',
+                theme: 'vs-dark',
+                fontSize: 14,
+                fontFamily: 'IBM Plex Mono, Consolas, monospace',
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                lineNumbersMinChars: 3,
+                padding: { top: 18, bottom: 18 },
+                smoothScrolling: true,
+                cursorSmoothCaretAnimation: 'on',
+            });
+
+            // Keyboard shortcut: Ctrl/Cmd+Enter → compile
+            editor.addCommand(
+                monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+                () => compile()
+            );
+
+            // Keyboard shortcut: Shift+Alt+F → format (mirrors VS Code)
+            editor.addCommand(
+                monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+                () => {}
+            );
+        });
+        
+        // Status update
+        function setStatus(status, type = 'ready') {
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = status;
+            badge.className = `status-badge ${type}`;
+        }
+        
+        // Compile function
+        async function compile(withDebug = false) {
+            const formula = editor.getValue();
+            const compileBtn = document.getElementById('compileBtn');
+            
+            compileBtn.disabled = true;
+            setStatus('Compiling...', 'compiling');
+            
+            try {
+                const endpoint = withDebug ? '/api/compile/debug' : '/api/compile';
+                const response = await fetch(`http://localhost:8080${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ formula, debug: withDebug })
+                });
+                
+                const result = await response.json();
+                displayResults(result);
+                setStatus(result.success ? 'Success' : 'Failed', result.success ? 'ready' : 'error');
+            } catch (err) {
+                displayError('Connection error: ' + err.message);
+                setStatus('Error', 'error');
+            } finally {
+                compileBtn.disabled = false;
+            }
+        }
+        
+        function displayResults(result) {
+            lastCompileResult = result;
+            
+            if (result.success) {
+                // Show output in the output tab
+                document.querySelector('#output .output-section').innerHTML = `
+                    <h3 class="success">Compiled Successfully</h3>
+                    <div class="output-content">${escapeHtml(result.result || 'No output')}</div>
+                `;
+                
+                // Formatted
+                document.querySelector('#formatted .output-section').innerHTML = `
+                    <h3>Formatted Code</h3>
+                    <div class="output-content"><pre>${escapeHtml(result.formatted_code || 'N/A')}</pre></div>
+                `;
+                
+                // SQL
+                document.querySelector('#sql .output-section').innerHTML = `
+                    <h3>Generated SQL</h3>
+                    <div class="output-content"><pre>${escapeHtml(result.sql || 'N/A')}</pre></div>
+                `;
+                
+                // Debug
+                if (debugMode && (result.ast || result.tokens)) {
+                    let debugContent = '';
+                    if (result.ast) {
+                        debugContent += `<h3>Abstract Syntax Tree</h3>
+                            <div class="output-content"><pre>${escapeHtml(result.ast)}</pre></div>`;
+                    }
+                    if (result.tokens) {
+                        debugContent += `<h3>Token List</h3>
+                            <div class="output-content"><pre>${result.tokens.map(t => escapeHtml(t)).join('\n')}</pre></div>`;
+                    }
+                    document.querySelector('#debug .output-section').innerHTML = debugContent;
+                } else {
+                    document.querySelector('#debug .output-section').innerHTML = `<p class="hint">Enable with Debug button to see AST and tokens</p>`;
+                }
+            } else {
+                // Show errors in the output tab
+                const errorHtml = result.errors.map((err, idx) => {
+                    let errorDisplay = `<div class="error-line">
+                        <strong style="color: var(--error);">Error ${idx + 1}:</strong> ${escapeHtml(err.message)}`;
+                    
+                    if (err.line) {
+                        // Show line:column reference
+                        errorDisplay += `<br><span style="color: #999; font-size: 11px; margin-right: 8px;">Line ${err.line}, Column ${err.column || 1}</span>`;
+                        
+                        // Show the actual source line with caret indicator
+                        if (err.context) {
+                            const lineNum = err.line.toString().padStart(2, ' ');
+                            const col0     = (err.column ? err.column - 1 : 0);
+                            const spanLen  = (err.span_len || 1);
+
+                            // Split the raw context into three parts and escape each
+                            // independently so the red <span> survives HTML escaping.
+                            const before    = escapeHtml(err.context.slice(0, col0));
+                            const highlight = escapeHtml(err.context.slice(col0, col0 + spanLen));
+                            const after     = escapeHtml(err.context.slice(col0 + spanLen));
+
+                            // Source line with the error chars colored red inline.
+                            // This remains accurate even when the terminal or panel wraps
+                            // the line, because the color lives on the character itself.
+                            const codeLine = `${lineNum}  │ ${before}<span style="color:#ff8f85;font-weight:700;text-decoration:underline;">${highlight}</span>${after}`;
+
+                            // Caret line (aligned to the same col offset as before)
+                            const caretCol  = 6 + col0;
+                            const caretLine = ' '.repeat(caretCol) + '<span style="color:#ff8f85;">' + '^'.repeat(spanLen) + '</span>';
+                            
+                            errorDisplay += `<pre style="margin-top: 8px; margin-bottom: 8px; padding: 8px; font-family: 'IBM Plex Mono', 'Monaco', 'Menlo', monospace; font-size: 12px; color: #888; background: #252526; border: 1px solid #3e3e42; border-radius: 3px; line-height: 1.4;">${codeLine}\n${caretLine} <span style="font-size: 11px; color: #f48771;">(column ${err.column || 1})</span></pre>`;
+                        }
+                    } else {
+                        // Error without location info
+                        errorDisplay += `<br><span style="color: #999; font-size: 11px;">No location information</span>`;
+                    }
+                    
+                    errorDisplay += `</div>`;
+                    return errorDisplay;
+                }).join('');
+                
+                document.querySelector('#output .output-section').innerHTML = `
+                    <h3 class="error">Compilation Errors</h3>
+                    ${errorHtml}
+                `;
+            }
+        }
+        
+        function displayError(err) {
+            document.querySelector('#output .output-section').innerHTML = `
+                <h3 class="error">Error</h3>
+                <div class="error-content">${escapeHtml(err)}</div>
+            `;
+        }
+        
+        function escapeHtml(text) {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        // Event listeners
+        document.getElementById('compileBtn').addEventListener('click', () => compile());
+        
+        document.getElementById('debugBtn').addEventListener('click', () => {
+            debugMode = !debugMode;
+            const debugBtn = document.getElementById('debugBtn');
+            const debugTab = document.querySelector('[data-tab="debug"]');
+            
+            if (debugMode) {
+                // Turn on debug mode: update button style and compile with debug
+                debugBtn.style.background = 'linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%)';
+                debugBtn.style.color = '#06101d';
+                debugBtn.style.borderColor = 'transparent';
+                debugTab.classList.add('visible');
+                compile(true);
+            } else {
+                // Turn off debug mode: update button style and hide debug tab
+                debugBtn.style.background = 'rgba(255, 255, 255, 0.03)';
+                debugBtn.style.color = 'var(--muted-strong)';
+                debugBtn.style.borderColor = 'var(--border-strong)';
+                debugTab.classList.remove('visible');
+                const debugContent = document.querySelector('#debug .output-section');
+                if (debugContent) {
+                    debugContent.innerHTML = `<p class="hint">Enable with Debug button to see AST and tokens</p>`;
+                }
+                compile(false);
+            }
+        });
+        
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            editor.setValue('');
+            setStatus('Cleared', 'ready');
+        });
+        
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                e.target.classList.add('active');
+                document.getElementById(e.target.dataset.tab).classList.add('active');
+            });
+        });
+        
+        // Keyboard shortcut moved into Monaco require() callback above.
+        console.log('%cM Engine Playground', 'font-size: 16px; color: #56c2ff; font-weight: bold;');
+        console.log('%cDebug Mode: Open DevTools Console for server logs', 'color: #999;');
+    </script>
+</body>
+</html>

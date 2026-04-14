@@ -1,0 +1,8 @@
+[package]
+name = "pq_lexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pq_grammar     = { path = "../pq_grammar"     }
+pq_diagnostics = { path = "../pq_diagnostics" }

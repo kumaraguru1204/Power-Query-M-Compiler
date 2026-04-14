@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZPQ logo">
+  <title>ZPQ</title>
+  <defs>
+    <filter id="soft-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <text
+    x="50%"
+    y="50%"
+    text-anchor="middle"
+    dominant-baseline="central"
+    font-family="Segoe UI, Arial, Helvetica, sans-serif"
+    font-size="28"
+    font-weight="900"
+    letter-spacing="1"
+    fill="#FFFFFF"
+    filter="url(#soft-shadow)"
+  >ZPQ</text>
+</svg>
