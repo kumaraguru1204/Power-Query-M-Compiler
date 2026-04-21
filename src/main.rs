@@ -3,29 +3,26 @@ use pq_engine::Engine;
 fn main() {
     // ── Input data (rows that Source table will have) ─────────────────────
     let json = r#"
-    {
+            {
         "source": "workbook.xlsx",
-        "sheet":  "Sales",
+        "sheet": "TestSheet",
         "rows": [
-            ["Name",    "Age", "Salary", "Active"],
-            ["Alice",   "30",  "50000.50", "true"],
-            ["Bob",     "25",  "40000.00", "false"],
-            ["Charlie", "35",  "60000.75", "false"]
+            ["Name", "Age", "Dept", "Salary", "Active", "Date", "Score", "City"],
+            ["Alice", "30", "HR", "50000.50", "true", "01/02/2024", "85", "Chennai"],
+            ["Bob", "25", "IT", "40000.00", "false", "15/03/2024", "90", "Coimbatore"],
+            ["Charlie", "35", "Finance", "60000.75", "true", "20/04/2024", "78", "Madurai"],
+            ["David", "28", "IT", "45000.00", "false", "05/05/2024", "88", "Salem"]
         ]
     }
     "#;
-
+    println!("{}", json);
     // ── Your M formula (edit this) ────────────────────────────────────────
     let formula = r#"
-            let
-                Source = Excel.Workbook(File.Contents("file.xlsx"), null, true),
-                Result = List.Generate(
-                        () => 1,
-                        each _ < [Name],
-                        each _ + 1
-                )
-            in
-                Result
+        let
+            Result = List.Select({}, each true)
+        in
+            Result
+
     "#;
 
     println!("══════════════════════════════════════════════════════════");

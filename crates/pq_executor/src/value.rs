@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 /// A typed value produced at runtime when evaluating an expression.
 /// All table values start as raw strings; the executor coerces them
@@ -10,6 +11,11 @@ pub enum Value {
     Bool(bool),
     Text(String),
     Null,
+    /// Heterogeneous list value, e.g. `{1, 2, 3}` or `{[Name="A"], [Name="B"]}`.
+    List(Vec<Value>),
+    /// Record value, e.g. `[Name = "Alice", Age = 30]`. Field order is
+    /// preserved by `BTreeMap` for deterministic iteration.
+    Record(BTreeMap<String, Value>),
 }
 
 impl PartialEq for Value {
@@ -23,6 +29,8 @@ impl PartialEq for Value {
             (Value::Bool(a),  Value::Bool(b))  => a == b,
             (Value::Text(a),  Value::Text(b))  => a == b,
             (Value::Null,     Value::Null)      => true,
+            (Value::List(a),  Value::List(b))  => a == b,
+            (Value::Record(a),Value::Record(b)) => a == b,
             _                                   => false,
         }
     }
@@ -40,6 +48,16 @@ impl Value {
             Value::Bool(b)   => b.to_string(),
             Value::Text(s)   => s.clone(),
             Value::Null      => String::new(),
+            Value::List(items) => {
+                let inner: Vec<String> = items.iter().map(|v| v.to_raw_string()).collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Value::Record(fields) => {
+                let inner: Vec<String> = fields.iter()
+                    .map(|(k, v)| format!("{}={}", k, v.to_raw_string()))
+                    .collect();
+                format!("[{}]", inner.join(", "))
+            }
         }
     }
 

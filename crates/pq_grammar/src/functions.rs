@@ -31,6 +31,21 @@ pub enum ArgKind {
     /// Absent or `null` → `None`; `true`/`false` → `Some(bool)`.
     /// Collected into `opt_null_bool_args` in the parser state.
     OptNullableBool,
+    /// Second argument to `Table.RemoveColumns`: either a bare `"string"` or a
+    /// list `{"col1","col2",...}`.  Always normalised into `col_lists`.
+    ColumnListOrString,
+    /// Optional third argument to `Table.RemoveColumns`: `MissingField.Error`,
+    /// `MissingField.Ignore`, or `MissingField.UseNull`.
+    /// Stored in `opt_missing_field` in the parser state.
+    OptMissingField,
+    /// Second argument to `Table.ColumnsOfType`: a brace-enclosed list of bare
+    /// M type expressions, e.g. `{type number, type text}`.
+    /// Stored in `bare_type_list` in the parser state.
+    BareTypeList,
+    /// Optional third argument to `Table.TransformColumnTypes`: either a bare
+    /// culture string `"fr-FR"` or a record `[Culture="fr-FR", MissingField=MissingField.X]`.
+    /// Extracts into `opt_culture_str` and `opt_missing_field` in the parser state.
+    OptCultureOrRecord,
 }
 
 // ── FunctionDef ───────────────────────────────────────────────────────────
@@ -217,25 +232,36 @@ fn excel_functions() -> Vec<FunctionDef> { vec![
 fn table_functions() -> Vec<FunctionDef> { vec![
 
     // Construction ────────────────────────────────────────────────────────
-    fndef!("FromColumns", [ArgKind::ColumnList, ArgKind::ColumnList],
+    fndef!("FromColumns", [ArgKind::Value, ArgKind::ColumnList],
         sig(vec![list(list(Type::Any)), list(Type::Text)], Type::Table),
-        "Table.FromColumns({values,...},{col,...})"),
+        "Table.FromColumns({list1,...},{col,...})"),
     FunctionDef {
         name:      "FromList",
-        arg_hints: vec![ArgKind::StepRef, ArgKind::EachExpr],
-        signatures: vec![sig(vec![list(tvar("T")), fun(vec![tvar("T")], Type::Record)], Type::Table)],
+        arg_hints: vec![ArgKind::StepRefOrValue, ArgKind::OptValue],
+        signatures: vec![
+            sig(vec![list(tvar("T"))], Type::Table),
+            sig(vec![list(tvar("T")), fun(vec![tvar("T")], Type::Record)], Type::Table),
+        ],
         schema_transform: None,
-        doc: "Table.FromList(list, each splitter)",
+        doc: "Table.FromList(list, optional each splitter)",
     },
-    fndef!("FromRecords", [ArgKind::RecordList],
-        sig(vec![list(Type::Record)], Type::Table),
-        "Table.FromRecords({[col=val,...],...})"),
-    fndef!("FromRows", [ArgKind::RecordList, ArgKind::ColumnList],
+    FunctionDef {
+        name:      "FromRecords",
+        arg_hints: vec![ArgKind::StepRefOrValue],
+        signatures: vec![sig(vec![list(Type::Record)], Type::Table)],
+        schema_transform: None,
+        doc: "Table.FromRecords(records)",
+    },
+    fndef!("FromRows", [ArgKind::Value, ArgKind::ColumnList],
         sig(vec![list(Type::Any), list(Type::Text)], Type::Table),
-        "Table.FromRows({...},{col,...})"),
-    fndef!("FromValue", [ArgKind::Value],
-        sig(vec![Type::Any], Type::Table),
-        "Table.FromValue(value)"),
+        "Table.FromRows({row,...},{col,...})"),
+    FunctionDef {
+        name:      "FromValue",
+        arg_hints: vec![ArgKind::Value, ArgKind::OptRecordLit],
+        signatures: vec![sig(vec![Type::Any], Type::Table)],
+        schema_transform: None,
+        doc: "Table.FromValue(value, optional [DefaultFieldName=...])",
+    },
 
     // Conversions ─────────────────────────────────────────────────────────
     fndef!("ToColumns", [ArgKind::StepRef],
@@ -243,10 +269,13 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         "Table.ToColumns(prev)"),
     FunctionDef {
         name:      "ToList",
-        arg_hints: vec![ArgKind::StepRef, ArgKind::EachExpr],
-        signatures: vec![sig(vec![Type::Table, fun(vec![Type::Record], tvar("T"))], list(tvar("T")))],
+        arg_hints: vec![ArgKind::StepRef, ArgKind::OptValue],
+        signatures: vec![
+            sig(vec![Type::Table], list(tvar("T"))),
+            sig(vec![Type::Table, fun(vec![Type::Record], tvar("T"))], list(tvar("T"))),
+        ],
         schema_transform: None,
-        doc: "Table.ToList(prev, each combiner)",
+        doc: "Table.ToList(prev, optional each combiner)",
     },
     fndef!("ToRecords", [ArgKind::StepRef],
         sig(vec![Type::Table], list(Type::Record)),
@@ -359,7 +388,7 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         doc: "Table.Column(prev, col) → List<T>",
     },
     fndef!("ColumnNames", [ArgKind::StepRef], sig(vec![Type::Table], list(Type::Text)), "Table.ColumnNames(prev)"),
-    fndef!("ColumnsOfType", [ArgKind::StepRef, ArgKind::TypeList],
+    fndef!("ColumnsOfType", [ArgKind::StepRefOrValue, ArgKind::BareTypeList],
         sig(vec![Type::Table, list(Type::Any)], list(Type::Text)),
         "Table.ColumnsOfType(prev, {type,...})"),
     fndef!("DemoteHeaders", [ArgKind::StepRef], sig(vec![Type::Table], Type::Table), "Table.DemoteHeaders(prev)"),
@@ -370,9 +399,16 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         schema_transform: Some(schema_duplicate_column),
         doc:              "Table.DuplicateColumn(prev, col, newCol)",
     },
-    fndef!("HasColumns", [ArgKind::StepRef, ArgKind::ColumnList],
-        sig(vec![Type::Table, list(Type::Text)], Type::Boolean),
-        "Table.HasColumns(prev, {col,...})"),
+    FunctionDef {
+        name:             "HasColumns",
+        arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnListOrString],
+        signatures:       vec![
+            sig(vec![Type::Table, list(Type::Text)], Type::Boolean),
+            sigp(vec![p(Type::Table), p(Type::Text)], Type::Boolean),
+        ],
+        schema_transform: None,
+        doc:              "Table.HasColumns(prev, {col,...} or \"col\")",
+    },
     fndef!("Pivot", [ArgKind::StepRef, ArgKind::ColumnList, ArgKind::StringLit, ArgKind::StringLit],
         sig(vec![Type::Table, list(Type::Any), Type::Text, Type::Text], Type::Table),
         "Table.Pivot(prev, {val,...}, attrCol, valCol)"),
@@ -382,10 +418,19 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     fndef!("PromoteHeaders", [ArgKind::StepRef], sig(vec![Type::Table], Type::Table), "Table.PromoteHeaders(prev)"),
     FunctionDef {
         name:             "RemoveColumns",
-        arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnList],
-        signatures:       vec![sig(vec![Type::Table, list(Type::Text)], Type::Table)],
+        arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnListOrString, ArgKind::OptMissingField],
+        signatures:       vec![
+            // Table.RemoveColumns(table, {"col1",...})
+            sig(vec![Type::Table, list(Type::Text)], Type::Table),
+            // Table.RemoveColumns(table, "col")
+            sigp(vec![p(Type::Table), p(Type::Text)], Type::Table),
+            // Table.RemoveColumns(table, {"col1",...}, MissingField.X)
+            sigp(vec![p(Type::Table), p(list(Type::Text)), opt(Type::Any)], Type::Table),
+            // Table.RemoveColumns(table, "col", MissingField.X)
+            sigp(vec![p(Type::Table), p(Type::Text), opt(Type::Any)], Type::Table),
+        ],
         schema_transform: Some(schema_remove_columns),
-        doc:              "Table.RemoveColumns(prev, {col,...})",
+        doc:              "Table.RemoveColumns(prev, {col,...}, optional MissingField.X)",
     },
     FunctionDef {
         name:      "ReorderColumns",
@@ -403,10 +448,19 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     },
     FunctionDef {
         name:             "SelectColumns",
-        arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnList],
-        signatures:       vec![sig(vec![Type::Table, list(Type::Text)], Type::Table)],
+        arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnListOrString, ArgKind::OptMissingField],
+        signatures:       vec![
+            // Table.SelectColumns(table, {"col1",...})
+            sig(vec![Type::Table, list(Type::Text)], Type::Table),
+            // Table.SelectColumns(table, "col")
+            sigp(vec![p(Type::Table), p(Type::Text)], Type::Table),
+            // Table.SelectColumns(table, {"col1",...}, MissingField.X)
+            sigp(vec![p(Type::Table), p(list(Type::Text)), opt(Type::Any)], Type::Table),
+            // Table.SelectColumns(table, "col", MissingField.X)
+            sigp(vec![p(Type::Table), p(Type::Text), opt(Type::Any)], Type::Table),
+        ],
         schema_transform: Some(schema_select_columns),
-        doc:              "Table.SelectColumns(prev, {col,...})",
+        doc:              "Table.SelectColumns(prev, {col,...}, optional MissingField.X)",
     },
     FunctionDef {
         name:      "TransformColumnNames",
@@ -547,17 +601,23 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     },
     FunctionDef {
         name:             "TransformColumns",
-        arg_hints:        vec![ArgKind::StepRef, ArgKind::TransformList],
-        signatures:       vec![sig(vec![Type::Table, list(Type::Any)], Type::Table)],
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::TransformList, ArgKind::OptValue, ArgKind::OptMissingField],
+        signatures:       vec![
+            sig(vec![Type::Table, list(Type::Any)], Type::Table),
+            sigp(vec![p(Type::Table), p(list(Type::Any)), opt(Type::Any), opt(Type::Number)], Type::Table),
+        ],
         schema_transform: Some(schema_transform_columns),
-        doc:              "Table.TransformColumns(prev, {{col,each expr},...})",
+        doc:              "Table.TransformColumns(prev, {{col,each expr},...}, optional defaultTransform, optional missingField)",
     },
     FunctionDef {
         name:             "TransformColumnTypes",
-        arg_hints:        vec![ArgKind::StepRef, ArgKind::TypeList],
-        signatures:       vec![sig(vec![Type::Table, list(Type::Any)], Type::Table)],
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::TypeList, ArgKind::OptCultureOrRecord],
+        signatures:       vec![
+            sig(vec![Type::Table, list(Type::Any)], Type::Table),
+            sigp(vec![p(Type::Table), p(list(Type::Any)), opt(Type::Any)], Type::Table),
+        ],
         schema_transform: Some(schema_transform_column_types),
-        doc:              "Table.TransformColumnTypes(prev, {{col,type},...})",
+        doc:              "Table.TransformColumnTypes(prev, {{col,type},...}, optional culture)",
     },
     FunctionDef {
         name:      "TransformRows",

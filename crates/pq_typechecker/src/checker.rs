@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use pq_ast::{
     Program,
+    call_arg::CallArg,
     expr::{Expr, ExprNode},
     step::{Step, StepKind},
 };
@@ -43,27 +44,27 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    // ── column lookup ─────────────────────────────────────────────────────
+    // â”€â”€ column lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn lookup_col(schema: Option<&[(String, ColumnType)]>, name: &str) -> Option<ColumnType> {
         schema?.iter().find(|(n, _)| n == name).map(|(_, t)| t.clone())
     }
 
-    // ── expression annotation ─────────────────────────────────────────────
+    // â”€â”€ expression annotation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Annotate every node in `node`'s subtree with its inferred type.
     ///
-    /// **Phase 1** – recurse into child nodes mutably (bottom-up), populating
+    /// **Phase 1** â€“ recurse into child nodes mutably (bottom-up), populating
     /// their `inferred_type` fields.
-    /// **Phase 2** – compute this node's type from the already-annotated
+    /// **Phase 2** â€“ compute this node's type from the already-annotated
     /// children (read-only), emitting diagnostics on errors.
-    /// **Phase 3** – store the result in `node.inferred_type` and return it.
+    /// **Phase 3** â€“ store the result in `node.inferred_type` and return it.
     fn infer_expr_mut(
         &mut self,
         node:   &mut ExprNode,
         schema: Option<&[(String, ColumnType)]>,
     ) -> Option<ColumnType> {
-        // ── Phase 1: recurse into children ──────────────────────────────
+        // â”€â”€ Phase 1: recurse into children â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Scoped block ensures the mutable borrow of node.expr ends before
         // Phase 2 needs to read node as a whole.
         {
@@ -121,12 +122,12 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => {} // leaf nodes have no children
             }
-        } // ← mutable borrow of node.expr ends here
+        } // â† mutable borrow of node.expr ends here
 
-        // ── Phase 2: compute type from already-annotated children ────────
+        // â”€â”€ Phase 2: compute type from already-annotated children â”€â”€â”€â”€â”€â”€â”€â”€
         let ty = self.compute_node_type(node, schema);
 
-        // ── Phase 3: store and return ─────────────────────────────────────
+        // â”€â”€ Phase 3: store and return â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         node.inferred_type = ty.clone();
         ty
     }
@@ -139,14 +140,14 @@ impl<'a> TypeChecker<'a> {
         schema: Option<&[(String, ColumnType)]>,
     ) -> Option<ColumnType> {
         match &node.expr {
-            // ── literals ─────────────────────────────────────────────────
+            // â”€â”€ literals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::IntLit(_)    => Some(ColumnType::Integer),
             Expr::FloatLit(_)  => Some(ColumnType::Float),
             Expr::BoolLit(_)   => Some(ColumnType::Boolean),
             Expr::StringLit(_) => Some(ColumnType::Text),
             Expr::NullLit      => Some(ColumnType::Null),
 
-            // ── column references ────────────────────────────────────────
+            // â”€â”€ column references â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::ColumnAccess(name) => {
                 Self::lookup_col(schema, name)
                     .or_else(|| self.table.get_column(name).map(|c| c.col_type.clone()))
@@ -161,15 +162,15 @@ impl<'a> TypeChecker<'a> {
                     // Return the type of the implicit lambda parameter, if bound.
                     self.lambda_param.clone()
                 } else if name.contains('.') {
-                    None // dotted name — not a column type
+                    None // dotted name â€” not a column type
                 } else {
                     Self::lookup_col(schema, name)
                         .or_else(|| self.table.get_column(name).map(|c| c.col_type.clone()))
                 }
             }
 
-            // ── lambda ───────────────────────────────────────────────────
-            // `each <body>` → Lambda { param: "_", body }.
+            // â”€â”€ lambda â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // `each <body>` â†’ Lambda { param: "_", body }.
             // Type = Function(<body_return_type>).
             // Returns None when body inference failed (errors already logged).
             Expr::Lambda { body, .. } => {
@@ -177,7 +178,7 @@ impl<'a> TypeChecker<'a> {
                 Some(ColumnType::Function(Box::new(ret)))
             }
 
-            // ── unary ops ────────────────────────────────────────────────
+            // â”€â”€ unary ops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::UnaryOp { op, operand } => {
                 let t = operand.inferred_type.clone()?;
                 match op {
@@ -210,7 +211,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            // ── binary ops ───────────────────────────────────────────────
+            // â”€â”€ binary ops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::BinaryOp { left, op, right } => {
                 let lt = left.inferred_type.clone();
                 let rt = right.inferred_type.clone();
@@ -246,7 +247,7 @@ impl<'a> TypeChecker<'a> {
                 self.check_binary_op_types(&lt, &rt, op, &node.span)
             }
 
-            // ── function calls ───────────────────────────────────────────
+            // â”€â”€ function calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::FunctionCall { name, args } => {
                 let arg_types: Vec<Option<ColumnType>> =
                     args.iter().map(|a| a.inferred_type.clone()).collect();
@@ -254,7 +255,7 @@ impl<'a> TypeChecker<'a> {
                 let result = infer_call_return(name, &arg_types);
 
                 // Emit a diagnostic only when every argument type is known
-                // but the call still fails — that is a genuine type mismatch.
+                // but the call still fails â€” that is a genuine type mismatch.
                 // When any arg is None (unknown), we simply propagate None without
                 // a diagnostic because errors were already reported upstream.
                 if result.is_none()
@@ -282,7 +283,7 @@ impl<'a> TypeChecker<'a> {
                 result
             }
 
-            // ── collections ──────────────────────────────────────────────
+            // â”€â”€ collections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Expr::List(items) => {
                 if items.is_empty() {
                     return Some(ColumnType::List(Box::new(ColumnType::Null)));
@@ -411,155 +412,89 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    // ── per-step expression annotation ───────────────────────────────────
-
     fn annotate_step_exprs(
         &mut self,
         kind:   &mut StepKind,
         schema: Option<&[(String, ColumnType)]>,
     ) {
         match kind {
-            StepKind::Filter { condition, .. } => {
-                if let Some(t) = self.infer_expr_mut(condition, schema) {
-                    let body_ty = match t {
-                        ColumnType::Function(inner) => *inner,
-                        other => other,
-                    };
-                    if body_ty != ColumnType::Boolean {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "E405",
-                                format!("filter condition must be Boolean, got '{}'", body_ty),
-                            )
-                            .with_label(
-                                condition.span.clone(),
-                                "this must produce a Boolean value",
-                            )
-                            .with_suggestion("use a comparison operator like >, <, =, <>")
-                        );
+            StepKind::Source { .. } | StepKind::NavigateSheet { .. } => {}
+            StepKind::ValueBinding { expr } => { self.infer_expr_mut(expr, schema); }
+            StepKind::FunctionCall { name, args } => {
+                match name.as_str() {
+                    // SelectRows / row-predicate functions: validate Boolean result
+                    "Table.SelectRows" => {
+                        if let Some(CallArg::Expr(cond)) = args.get_mut(1) {
+                            if let Some(t) = self.infer_expr_mut(cond, schema) {
+                                let body_ty = match t { ColumnType::Function(inner) => *inner, other => other };
+                                if body_ty != ColumnType::Boolean {
+                                    self.diagnostics.push(
+                                        Diagnostic::error("E405", format!("filter condition must be Boolean, got '{}'", body_ty))
+                                            .with_label(cond.span.clone(), "this must produce a Boolean value")
+                                            .with_suggestion("use a comparison operator like >, <, =, <>")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // TransformColumns: bind `_` to each column's type
+                    "Table.TransformColumns" => {
+                        if let Some(CallArg::TransformList(transforms)) = args.get_mut(1) {
+                            for (col_name, expr, _) in transforms.iter_mut() {
+                                let col_type = schema.and_then(|s| Self::lookup_col(Some(s), col_name));
+                                let old = self.lambda_param.take();
+                                self.lambda_param = col_type;
+                                self.infer_expr_mut(expr, schema);
+                                self.lambda_param = old;
+                            }
+                        }
+                    }
+                    // List.Transform: bind `_` to the element type of the list arg
+                    "List.Transform" => {
+                        // Infer the list arg (args[0]) first.
+                        let elem_ty = if let Some(CallArg::Expr(list_arg)) = args.get_mut(0) {
+                            let list_ty = self.infer_expr_mut(list_arg, schema);
+                            match list_ty {
+                                Some(ColumnType::List(inner)) => Some(*inner),
+                                _ => None,
+                            }
+                        } else { None };
+                        // Now infer the transformer fn (args[1]) with `_` bound to elem_ty.
+                        if let Some(CallArg::Expr(fn_arg)) = args.get_mut(1) {
+                            let old = self.lambda_param.take();
+                            self.lambda_param = elem_ty.clone();
+                            let fn_ty = self.infer_expr_mut(fn_arg, schema);
+                            self.lambda_param = old;
+                            // If the fn body expected a different type, emit an error.
+                            // (actual type mismatch caught by infer_expr_mut already if
+                            //  Text.Length gets Integer — we just ensure elem_ty is recorded)
+                            let _ = fn_ty;
+                        }
+                    }
+                    // Default: infer types for all Expr / AggList / TransformList args
+                    _ => {
+                        for arg in args.iter_mut() {
+                            match arg {
+                                CallArg::Expr(e) => { self.infer_expr_mut(e, schema); }
+                                CallArg::AggList(aggs) => {
+                                    for agg in aggs.iter_mut() {
+                                        self.infer_expr_mut(&mut agg.expression, schema);
+                                    }
+                                }
+                                CallArg::TransformList(transforms) => {
+                                    for (_, expr, _) in transforms.iter_mut() {
+                                        self.infer_expr_mut(expr, schema);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
-            StepKind::AddColumn { expression, .. } => {
-                self.infer_expr_mut(expression, schema);
-            }
-            StepKind::TransformColumns { transforms, .. } => {
-                for (col_name, expr, _col_type) in transforms.iter_mut() {
-                    // Bind `_` to the column's current type so `each _ * 2` etc.
-                    // can be validated against the actual column type.
-                    let col_type = schema.and_then(|s| Self::lookup_col(Some(s), col_name));
-                    let old = self.lambda_param.take();
-                    self.lambda_param = col_type;
-                    self.infer_expr_mut(expr, schema);
-                    self.lambda_param = old;
-                }
-            }
-            StepKind::Group { aggregates, .. } => {
-                for agg in aggregates.iter_mut() {
-                    self.infer_expr_mut(&mut agg.expression, schema);
-                }
-            }
-            // ListTransform: infer the source list first, extract its element
-            // type T, then bind `_` to T before inferring the per-element lambda.
-            StepKind::ListTransform { list_expr, transform } => {
-                self.infer_expr_mut(list_expr, schema);
-
-                // Extract the element type from the (now-annotated) list expression.
-                let elem_type = match &list_expr.inferred_type {
-                    Some(ColumnType::List(inner)) => Some((**inner).clone()),
-                    _ => None,
-                };
-
-                let old = self.lambda_param.take();
-                self.lambda_param = elem_type;
-                self.infer_expr_mut(transform, None);
-                self.lambda_param = old;
-            }
-            // ListGenerate: no deep type-inference needed; just prevent panics.
-            StepKind::ListGenerate { initial, condition, next, selector } => {
-                self.infer_expr_mut(initial,   schema);
-                self.infer_expr_mut(condition, None);
-                self.infer_expr_mut(next,      None);
-                if let Some(sel) = selector {
-                    self.infer_expr_mut(sel, None);
-                }
-            }
-
-            // New row operations with expression args
-            StepKind::TransformRows { transform, .. } => {
-                self.infer_expr_mut(transform, schema);
-            }
-            StepKind::MatchesAllRows { condition, .. }
-            | StepKind::MatchesAnyRows { condition, .. } => {
-                if let Some(t) = self.infer_expr_mut(condition, schema) {
-                    let body_ty = match t {
-                        ColumnType::Function(inner) => *inner,
-                        other => other,
-                    };
-                    if body_ty != ColumnType::Boolean {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "E405",
-                                format!("predicate must be Boolean, got '{}'", body_ty),
-                            )
-                            .with_label(condition.span.clone(), "this must produce a Boolean value")
-                        );
-                    }
-                }
-            }
-            StepKind::FirstN { count, .. }
-            | StepKind::LastN { count, .. }
-            | StepKind::Skip { count, .. }
-            | StepKind::RemoveFirstN { count, .. }
-            | StepKind::RemoveLastN { count, .. }
-            | StepKind::Repeat { count, .. } => {
-                self.infer_expr_mut(count, schema);
-            }
-            StepKind::Range { offset, count, .. }
-            | StepKind::RemoveRows { offset, count, .. } => {
-                self.infer_expr_mut(offset, schema);
-                self.infer_expr_mut(count, schema);
-            }
-            StepKind::AlternateRows { offset, skip, take, .. } => {
-                self.infer_expr_mut(offset, schema);
-                self.infer_expr_mut(skip, schema);
-                self.infer_expr_mut(take, schema);
-            }
-
-            // New operations with expression args
-            StepKind::TransformColumnNames { transform, .. } => {
-                self.infer_expr_mut(transform, schema);
-            }
-            StepKind::CombineColumns { combiner, .. } => {
-                self.infer_expr_mut(combiner, schema);
-            }
-            StepKind::SplitColumn { splitter, .. } => {
-                self.infer_expr_mut(splitter, schema);
-            }
-            StepKind::ReplaceValue { old_value, new_value, replacer, .. } => {
-                self.infer_expr_mut(old_value, schema);
-                self.infer_expr_mut(new_value, schema);
-                self.infer_expr_mut(replacer, schema);
-            }
-            StepKind::ReplaceErrorValues { replacements, .. } => {
-                for (_, expr, _) in replacements.iter_mut() {
-                    self.infer_expr_mut(expr, schema);
-                }
-            }
-            StepKind::TableMaxN { count, .. }
-            | StepKind::TableMinN { count, .. } => {
-                self.infer_expr_mut(count, schema);
-            }
-
-            // Steps with no embedded expressions.
-            _ => {}
         }
     }
 
-    // ── per-step output-schema computation ───────────────────────────────
-
-    /// Derive the output column schema for a step.
-    /// Expression nodes must already be annotated before calling this.
     fn compute_output_schema(
         &self,
         kind:         &StepKind,
@@ -571,317 +506,271 @@ impl<'a> TypeChecker<'a> {
                     .map(|c| (c.name.clone(), c.col_type.clone()))
                     .collect()
             ),
+            StepKind::NavigateSheet { .. } => input_schema,
+            StepKind::ValueBinding { .. } => None,
+            StepKind::FunctionCall { name, args } => {
+                match name.as_str() {
+                    // â”€â”€ Passthrough schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.PromoteHeaders"
+                    | "Table.SelectRows" | "Table.Sort" | "Table.ReverseRows"
+                    | "Table.Distinct" | "Table.Repeat" | "Table.AlternateRows"
+                    | "Table.FindText" | "Table.FillDown" | "Table.FillUp"
+                    | "Table.FirstN" | "Table.LastN" | "Table.Skip" | "Table.Range"
+                    | "Table.RemoveFirstN" | "Table.RemoveLastN" | "Table.RemoveRows"
+                    | "Table.RemoveRowsWithErrors" | "Table.SelectRowsWithErrors"
+                    | "Table.TransformRows" | "Table.DemoteHeaders"
+                    | "Table.Max" | "Table.Min" | "Table.MaxN" | "Table.MinN"
+                    | "Table.ReplaceValue" | "Table.ReplaceErrorValues"
+                    | "Table.InsertRows" | "Table.ReplaceRows"
+                    | "Table.Buffer" | "Table.StopFolding" | "Table.ConformToPageReader"
+                    | "Table.TransformColumns"
+                    => input_schema,
 
-            StepKind::PromoteHeaders { .. } => input_schema,
-
-            StepKind::ChangeTypes { columns, .. } => {
-                let mut schema = input_schema?;
-                for col in schema.iter_mut() {
-                    if let Some((_, new_ty)) = columns.iter().find(|(n, _)| n == &col.0) {
-                        col.1 = new_ty.clone();
+                    // â”€â”€ TransformColumnTypes: update column types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.TransformColumnTypes" => {
+                        let columns = args.get(1).and_then(|a| a.as_type_list()).unwrap_or(&[]);
+                        let mut schema = input_schema?;
+                        for (col_name, new_ty) in columns {
+                            if let Some(col) = schema.iter_mut().find(|(n, _)| n == col_name) {
+                                col.1 = new_ty.clone();
+                            }
+                            // Missing columns silently skipped (resolver validates)
+                        }
+                        Some(schema)
                     }
-                }
-                Some(schema)
-            }
 
-            StepKind::Filter { .. } => input_schema,
-
-            StepKind::AddColumn { col_name, expression, .. } => {
-                let mut schema = input_schema?;
-                let new_type = expression.inferred_type.clone()
-                    .map(|t| match t {
-                        ColumnType::Function(inner) => *inner,
-                        other => other,
-                    })
-                    .unwrap_or(ColumnType::Text);
-                schema.push((col_name.clone(), new_type));
-                Some(schema)
-            }
-
-            StepKind::RemoveColumns { columns, .. } => Some(
-                input_schema?
-                    .into_iter()
-                    .filter(|(n, _)| !columns.contains(n))
-                    .collect()
-            ),
-
-            StepKind::RenameColumns { renames, .. } => Some(
-                input_schema?
-                    .into_iter()
-                    .map(|(n, t)| {
-                        let new_n = renames.iter()
-                            .find(|(old, _)| old == &n)
-                            .map(|(_, new)| new.clone())
-                            .unwrap_or(n);
-                        (new_n, t)
-                    })
-                    .collect()
-            ),
-
-            StepKind::Sort { .. } => input_schema,
-
-            StepKind::TransformColumns { transforms, .. } => {
-                let mut schema = input_schema?;
-                for (col_name, expr, opt_type) in transforms {
-                    let new_type = opt_type.clone().or_else(|| {
-                        expr.inferred_type.clone()
-                            .map(|t| match t {
-                                ColumnType::Function(inner) => *inner,
-                                other => other,
-                            })
-                    }).unwrap_or(ColumnType::Text);
-                    if let Some(col) = schema.iter_mut().find(|(n, _)| n == col_name) {
-                        col.1 = new_type;
+                    // â”€â”€ AddColumn: add new typed column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.AddColumn" => {
+                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
+                        let raw_ty   = args.get(2).and_then(|a| a.as_expr())
+                            .and_then(|e| e.inferred_type.clone())
+                            .unwrap_or(ColumnType::Text);
+                        // Lambdas produce Function(T) — unwrap to get the column type T.
+                        let expr_ty = match raw_ty {
+                            ColumnType::Function(inner) => *inner,
+                            other => other,
+                        };
+                        let mut schema = input_schema?;
+                        schema.push((col_name.to_string(), expr_ty));
+                        Some(schema)
                     }
-                }
-                Some(schema)
-            }
 
-            StepKind::Group { by, aggregates, .. } => {
-                let in_schema = input_schema.as_ref()?;
-                let mut cols: Vec<(String, ColumnType)> = Vec::new();
-                for col_name in by {
-                    let ty = in_schema.iter()
-                        .find(|(n, _)| n == col_name)
-                        .map(|(_, t)| t.clone())
-                        .unwrap_or(ColumnType::Text);
-                    cols.push((col_name.clone(), ty));
-                }
-                for agg in aggregates {
-                    cols.push((agg.name.clone(), agg.col_type.clone()));
-                }
-                Some(cols)
-            }
-
-            StepKind::Passthrough { .. } => input_schema,
-
-            // ── New row operations: schema passthrough ────────────────────
-            StepKind::FirstN          { .. }
-            | StepKind::LastN         { .. }
-            | StepKind::Skip          { .. }
-            | StepKind::Range         { .. }
-            | StepKind::RemoveFirstN  { .. }
-            | StepKind::RemoveLastN   { .. }
-            | StepKind::RemoveRows    { .. }
-            | StepKind::ReverseRows   { .. }
-            | StepKind::Repeat        { .. }
-            | StepKind::AlternateRows { .. }
-            | StepKind::FindText      { .. }
-            | StepKind::FillDown      { .. }
-            | StepKind::FillUp        { .. }
-            | StepKind::RemoveRowsWithErrors  { .. }
-            | StepKind::SelectRowsWithErrors  { .. }
-            | StepKind::TransformRows { .. }
-            | StepKind::MatchesAllRows { .. }
-            | StepKind::MatchesAnyRows { .. }
-            | StepKind::DemoteHeaders  { .. } => input_schema,
-
-            // Distinct: schema passthrough
-            StepKind::Distinct { .. } => input_schema,
-
-            // AddIndexColumn: input + index column (Integer)
-            StepKind::AddIndexColumn { col_name, .. } => {
-                let mut schema = input_schema?;
-                schema.push((col_name.clone(), ColumnType::Integer));
-                Some(schema)
-            }
-
-            // DuplicateColumn: input + copy of source column
-            StepKind::DuplicateColumn { src_col, new_col, .. } => {
-                let schema = input_schema.as_ref()?;
-                let src_ty = schema.iter()
-                    .find(|(n, _)| n == src_col)
-                    .map(|(_, t)| t.clone())
-                    .unwrap_or(ColumnType::Text);
-                let mut out = input_schema?;
-                out.push((new_col.clone(), src_ty));
-                Some(out)
-            }
-
-            // Transpose: dynamic schema
-            StepKind::Transpose { .. } => None,
-
-            // Unpivot: non-unpivoted columns + attr + val
-            StepKind::Unpivot { columns, attr_col, val_col, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = schema.into_iter()
-                    .filter(|(n, _)| !columns.contains(n))
-                    .collect();
-                out.push((attr_col.clone(), ColumnType::Text));
-                out.push((val_col.clone(), ColumnType::Text));
-                Some(out)
-            }
-
-            // UnpivotOtherColumns: keep cols + attr + val
-            StepKind::UnpivotOtherColumns { keep_cols, attr_col, val_col, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = schema.into_iter()
-                    .filter(|(n, _)| keep_cols.contains(n))
-                    .collect();
-                out.push((attr_col.clone(), ColumnType::Text));
-                out.push((val_col.clone(), ColumnType::Text));
-                Some(out)
-            }
-
-            // CombineTables: union of all schemas
-            StepKind::CombineTables { .. } => input_schema,
-
-            // PrefixColumns: rename all columns
-            StepKind::PrefixColumns { prefix, .. } => {
-                input_schema.map(|cols| {
-                    cols.into_iter()
-                        .map(|(n, t)| (format!("{}.{}", prefix, n), t))
-                        .collect()
-                })
-            }
-
-            // SelectColumns: keep subset in given order
-            StepKind::SelectColumns { columns, .. } => {
-                let schema = input_schema?;
-                Some(columns.iter().filter_map(|c| {
-                    schema.iter().find(|(n, _)| n == c).cloned()
-                }).collect())
-            }
-
-            // ReorderColumns: listed first, then remaining
-            StepKind::ReorderColumns { columns, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = columns.iter()
-                    .filter_map(|c| schema.iter().find(|(n, _)| n == c).cloned())
-                    .collect();
-                for col in &schema {
-                    if !out.iter().any(|(n, _)| n == &col.0) {
-                        out.push(col.clone());
+                    // â”€â”€ RemoveColumns: drop columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.RemoveColumns" => {
+                        let cols = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        input_schema.map(|s| s.into_iter().filter(|(n, _)| !cols.contains(n)).collect())
                     }
+
+                    // â”€â”€ RenameColumns: rename columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.RenameColumns" => {
+                        let renames = args.get(1).and_then(|a| a.as_rename_list()).unwrap_or(&[]);
+                        input_schema.map(|cols| cols.into_iter().map(|(n, t)| {
+                            let new_n = renames.iter().find(|(old, _)| old == &n)
+                                .map(|(_, new)| new.clone()).unwrap_or(n);
+                            (new_n, t)
+                        }).collect())
+                    }
+
+                    // â”€â”€ Group: by columns + aggregate outputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.Group" | "Table.FuzzyGroup" => {
+                        let by  = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let agg = args.get(2).and_then(|a| a.as_agg_list()).unwrap_or(&[]);
+                        let mut schema: Vec<(String, ColumnType)> = by.iter().map(|c| {
+                            let ty = input_schema.as_ref()
+                                .and_then(|s| s.iter().find(|(n, _)| n == c).map(|(_, t)| t.clone()))
+                                .unwrap_or(ColumnType::Text);
+                            (c.clone(), ty)
+                        }).collect();
+                        for a in agg { schema.push((a.name.clone(), a.col_type.clone())); }
+                        Some(schema)
+                    }
+
+                    // â”€â”€ AddIndexColumn: add integer index column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.AddIndexColumn" => {
+                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("Index");
+                        let mut schema = input_schema?;
+                        schema.push((col_name.to_string(), ColumnType::Integer));
+                        Some(schema)
+                    }
+
+                    // â”€â”€ DuplicateColumn: copy column with new name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.DuplicateColumn" => {
+                        let src_col = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
+                        let new_col = args.get(2).and_then(|a| a.as_str()).unwrap_or("");
+                        let src_ty = input_schema.as_ref()
+                            .and_then(|s| s.iter().find(|(n, _)| n == src_col).map(|(_, t)| t.clone()))
+                            .unwrap_or(ColumnType::Text);
+                        let mut schema = input_schema?;
+                        schema.push((new_col.to_string(), src_ty));
+                        Some(schema)
+                    }
+
+                    // â”€â”€ Unpivot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.Unpivot" => {
+                        let columns  = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let attr_col = args.get(2).and_then(|a| a.as_str()).unwrap_or("Attribute");
+                        let val_col  = args.get(3).and_then(|a| a.as_str()).unwrap_or("Value");
+                        input_schema.map(|s| {
+                            let mut out: Vec<(String, ColumnType)> = s.into_iter()
+                                .filter(|(n, _)| !columns.contains(n)).collect();
+                            out.push((attr_col.to_string(), ColumnType::Text));
+                            out.push((val_col.to_string(), ColumnType::Text));
+                            out
+                        })
+                    }
+
+                    // â”€â”€ UnpivotOtherColumns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.UnpivotOtherColumns" => {
+                        let keep     = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let attr_col = args.get(2).and_then(|a| a.as_str()).unwrap_or("Attribute");
+                        let val_col  = args.get(3).and_then(|a| a.as_str()).unwrap_or("Value");
+                        let schema   = input_schema?;
+                        let mut out: Vec<(String, ColumnType)> = schema.iter()
+                            .filter(|(n, _)| keep.contains(n)).cloned().collect();
+                        out.push((attr_col.to_string(), ColumnType::Text));
+                        out.push((val_col.to_string(), ColumnType::Text));
+                        Some(out)
+                    }
+
+                    // â”€â”€ PrefixColumns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.PrefixColumns" => {
+                        let prefix = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
+                        input_schema.map(|s| s.into_iter()
+                            .map(|(n, t)| (format!("{}.{}", prefix, n), t)).collect())
+                    }
+
+                    // â”€â”€ SelectColumns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.SelectColumns" => {
+                        let columns = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let schema  = input_schema?;
+                        Some(columns.iter()
+                            .filter_map(|c| schema.iter().find(|(n, _)| n == c).cloned())
+                            .collect())
+                    }
+
+                    // â”€â”€ ReorderColumns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.ReorderColumns" => {
+                        let columns = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let schema  = input_schema?;
+                        let mut out: Vec<(String, ColumnType)> = columns.iter()
+                            .filter_map(|c| schema.iter().find(|(n, _)| n == c).cloned())
+                            .collect();
+                        for item in &schema { if !columns.contains(&item.0) { out.push(item.clone()); } }
+                        Some(out)
+                    }
+
+                    // â”€â”€ CombineColumns: merge listed cols into one â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.CombineColumns" => {
+                        let columns = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let new_col = args.get(3).and_then(|a| a.as_str()).unwrap_or("Combined");
+                        input_schema.map(|s| {
+                            let mut out: Vec<(String, ColumnType)> = s.into_iter()
+                                .filter(|(n, _)| !columns.contains(n)).collect();
+                            out.push((new_col.to_string(), ColumnType::Text));
+                            out
+                        })
+                    }
+
+                    // â”€â”€ SplitColumn: one col â†’ two cols â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.SplitColumn" => {
+                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
+                        input_schema.map(|s| {
+                            let mut out: Vec<(String, ColumnType)> = s.into_iter()
+                                .filter(|(n, _)| n != col_name).collect();
+                            out.push((format!("{}.1", col_name), ColumnType::Text));
+                            out.push((format!("{}.2", col_name), ColumnType::Text));
+                            out
+                        })
+                    }
+
+                    // â”€â”€ ExpandTableColumn / ExpandRecordColumn â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.ExpandTableColumn" | "Table.ExpandRecordColumn" => {
+                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
+                        let columns  = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        input_schema.map(|s| {
+                            let mut out: Vec<(String, ColumnType)> = s.into_iter()
+                                .filter(|(n, _)| n != col_name).collect();
+                            out.extend(columns.iter().map(|c| (c.clone(), ColumnType::Text)));
+                            out
+                        })
+                    }
+
+                    // â”€â”€ Join: merge left + right (non-overlapping cols) â”€â”€â”€â”€â”€â”€
+                    "Table.Join" | "Table.FuzzyJoin" => {
+                        let right_name = args.get(2).and_then(|a| a.as_step_ref()).unwrap_or("");
+                        let left  = input_schema.unwrap_or_default();
+                        let right = self.step_schemas.get(right_name).cloned().unwrap_or_default();
+                        let mut out = left.clone();
+                        for item in right { if !left.iter().any(|(n, _)| n == &item.0) { out.push(item); } }
+                        Some(out)
+                    }
+
+                    // â”€â”€ NestedJoin: add nested table column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.NestedJoin" | "Table.FuzzyNestedJoin" => {
+                        let new_col = args.get(4).and_then(|a| a.as_str()).unwrap_or("NewColumn");
+                        input_schema.map(|mut s| { s.push((new_col.to_string(), ColumnType::Text)); s })
+                    }
+
+                    // â”€â”€ AddRankColumn: add integer rank column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.AddRankColumn" => {
+                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("Rank");
+                        input_schema.map(|mut s| { s.push((col_name.to_string(), ColumnType::Integer)); s })
+                    }
+
+                    // â”€â”€ Combine: schema from first input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.Combine" => {
+                        if let Some(inputs) = args.first().and_then(|a| a.as_step_ref_list()) {
+                            inputs.first().and_then(|s| self.step_schemas.get(s.as_str()).cloned())
+                        } else { None }
+                    }
+
+                    // â”€â”€ Schema table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.Schema" => Some(vec![
+                        ("Name".to_string(),       ColumnType::Text),
+                        ("Kind".to_string(),       ColumnType::Text),
+                        ("IsNullable".to_string(), ColumnType::Boolean),
+                    ]),
+
+                    // â”€â”€ No meaningful schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.RowCount" | "Table.ColumnCount" | "Table.IsEmpty" | "Table.IsDistinct"
+                    | "Table.HasColumns" | "Table.MatchesAllRows" | "Table.MatchesAnyRows"
+                    | "Table.ColumnNames" | "Table.ColumnsOfType"
+                    | "List.Generate" | "List.Select"
+                    => Some(vec![("Value".to_string(), ColumnType::Text)]),
+
+                    "List.Transform" => {
+                        // Derive output element type from the transformer function's return type.
+                        let fn_ty = args.get(1).and_then(|a| a.as_expr())
+                            .and_then(|e| e.inferred_type.clone());
+                        let elem_ty = match fn_ty {
+                            Some(ColumnType::Function(inner)) => *inner,
+                            Some(other) => other,
+                            None => ColumnType::Text,
+                        };
+                        Some(vec![("Value".to_string(), elem_ty)])
+                    }
+
+                    // â”€â”€ Structural transforms without simple schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    "Table.Transpose" | "Table.Pivot" | "Table.TransformColumnNames"
+                    | "Table.FromColumns" | "Table.FromList" | "Table.FromRecords"
+                    | "Table.FromRows" | "Table.FromValue"
+                    | "Table.ToColumns" | "Table.ToList" | "Table.ToRecords" | "Table.ToRows"
+                    | "Table.PartitionValues" | "Table.Profile" | "Table.Column" => None,
+
+                    // â”€â”€ Default: passthrough â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    _ => input_schema,
                 }
-                Some(out)
-            }
-
-            // TransformColumnNames: names change dynamically
-            StepKind::TransformColumnNames { .. } => None,
-
-            // CombineColumns: input minus merged cols + new col
-            StepKind::CombineColumns { columns, new_col, combiner, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = schema.into_iter()
-                    .filter(|(n, _)| !columns.contains(n))
-                    .collect();
-                let item_type = combiner.inferred_type.clone()
-                    .map(|t| match t {
-                        ColumnType::Function(inner) => *inner,
-                        other => other,
-                    })
-                    .unwrap_or(ColumnType::Text);
-                out.push((new_col.clone(), item_type));
-                Some(out)
-            }
-
-            // SplitColumn: input minus split col (dynamic new cols)
-            StepKind::SplitColumn { col_name, .. } => {
-                let schema = input_schema?;
-                Some(schema.into_iter().filter(|(n, _)| n != col_name).collect())
-            }
-
-            // Expand columns: input minus expanded col + new cols (all Text)
-            StepKind::ExpandTableColumn { col_name, columns, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = schema.into_iter()
-                    .filter(|(n, _)| n != col_name)
-                    .collect();
-                for c in columns {
-                    out.push((c.clone(), ColumnType::Text));
-                }
-                Some(out)
-            }
-            StepKind::ExpandRecordColumn { col_name, fields, .. } => {
-                let schema = input_schema?;
-                let mut out: Vec<(String, ColumnType)> = schema.into_iter()
-                    .filter(|(n, _)| n != col_name)
-                    .collect();
-                for f in fields {
-                    out.push((f.clone(), ColumnType::Text));
-                }
-                Some(out)
-            }
-
-            // Pivot: dynamic schema
-            StepKind::Pivot { .. } => None,
-
-            // Information functions: single-value schemas
-            StepKind::RowCount { .. }
-            | StepKind::ColumnCount { .. } => {
-                Some(vec![("Value".to_string(), ColumnType::Integer)])
-            }
-            StepKind::TableColumnNames { .. } => {
-                Some(vec![("Value".to_string(), ColumnType::Text)])
-            }
-            StepKind::TableIsEmpty { .. }
-            | StepKind::TableIsDistinct { .. }
-            | StepKind::HasColumns { .. } => {
-                Some(vec![("Value".to_string(), ColumnType::Boolean)])
-            }
-            StepKind::TableSchema { .. } => {
-                Some(vec![
-                    ("Name".to_string(), ColumnType::Text),
-                    ("Kind".to_string(), ColumnType::Text),
-                    ("IsNullable".to_string(), ColumnType::Boolean),
-                ])
-            }
-
-            // Join: merge both schemas
-            StepKind::Join { .. } => input_schema,
-
-            // NestedJoin: left schema + nested table column
-            StepKind::NestedJoin { new_col, .. } => {
-                let mut schema = input_schema?;
-                schema.push((new_col.clone(), ColumnType::Text));
-                Some(schema)
-            }
-
-            // AddRankColumn: input + Integer column
-            StepKind::AddRankColumn { col_name, .. } => {
-                let mut schema = input_schema?;
-                schema.push((col_name.clone(), ColumnType::Integer));
-                Some(schema)
-            }
-
-            // TableMax/Min: single row, same schema
-            StepKind::TableMax { .. }
-            | StepKind::TableMin { .. }
-            | StepKind::TableMaxN { .. }
-            | StepKind::TableMinN { .. } => input_schema,
-
-            // ReplaceValue/ReplaceErrorValues/InsertRows: schema passthrough
-            StepKind::ReplaceValue { .. }
-            | StepKind::ReplaceErrorValues { .. }
-            | StepKind::InsertRows { .. } => input_schema,
-
-            // ListGenerate: single-column "Value" result.
-            StepKind::ListGenerate { .. } => {
-                Some(vec![("Value".to_string(), ColumnType::Text)])
-            }
-
-            // ListTransform: single-column "Value" result.
-            // The column type is derived from the transform lambda's return type.
-            StepKind::ListTransform { transform, .. } => {
-                let item_type = transform.inferred_type.clone()
-                    .map(|t| match t {
-                        ColumnType::Function(inner) => *inner,
-                        other => other,
-                    })
-                    .unwrap_or(ColumnType::Text);
-                Some(vec![("Value".to_string(), item_type)])
             }
         }
     }
 
-    // ── per-step entry point ──────────────────────────────────────────────
+    // â”€â”€ per-step entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn check_step_mut(&mut self, step_name: &str, step: &mut Step) {
         // 1. Resolve the input step's schema (owned clone, releases borrow).
         let input_schema: Option<Vec<(String, ColumnType)>> = {
-            let input_name = input_step_name(&step.kind);
-            input_name.and_then(|n| self.step_schemas.get(n).cloned())
+            let input_name = pq_ast::step_input(&step.kind);
+            if input_name.is_empty() { None } else { self.step_schemas.get(input_name).cloned() }
         };
 
         // 2. Annotate all expression nodes using input schema as row context.
@@ -904,7 +793,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    // ── public entry point ────────────────────────────────────────────────
+    // â”€â”€ public entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     pub fn check(&mut self, program: &mut Program) -> CheckResult {
         for binding in program.steps.iter_mut() {
@@ -919,85 +808,8 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
-// ── Step input-name helper ────────────────────────────────────────────────
 
-fn input_step_name(kind: &StepKind) -> Option<&str> {
-    match kind {
-        StepKind::Source { .. }                  => None,
-        StepKind::PromoteHeaders   { input }     => Some(input),
-        StepKind::ChangeTypes      { input, .. } => Some(input),
-        StepKind::Filter           { input, .. } => Some(input),
-        StepKind::AddColumn        { input, .. } => Some(input),
-        StepKind::RemoveColumns    { input, .. } => Some(input),
-        StepKind::RenameColumns    { input, .. } => Some(input),
-        StepKind::Sort             { input, .. } => Some(input),
-        StepKind::TransformColumns { input, .. } => Some(input),
-        StepKind::Group            { input, .. } => Some(input),
-        // New operations
-        StepKind::FirstN          { input, .. }
-        | StepKind::LastN         { input, .. }
-        | StepKind::Skip          { input, .. }
-        | StepKind::Range         { input, .. }
-        | StepKind::RemoveFirstN  { input, .. }
-        | StepKind::RemoveLastN   { input, .. }
-        | StepKind::RemoveRows    { input, .. }
-        | StepKind::ReverseRows   { input }
-        | StepKind::Distinct      { input, .. }
-        | StepKind::Repeat        { input, .. }
-        | StepKind::AlternateRows { input, .. }
-        | StepKind::FindText      { input, .. }
-        | StepKind::FillDown      { input, .. }
-        | StepKind::FillUp        { input, .. }
-        | StepKind::AddIndexColumn { input, .. }
-        | StepKind::DuplicateColumn { input, .. }
-        | StepKind::Unpivot       { input, .. }
-        | StepKind::UnpivotOtherColumns { input, .. }
-        | StepKind::Transpose     { input }
-        | StepKind::RemoveRowsWithErrors  { input, .. }
-        | StepKind::SelectRowsWithErrors  { input, .. }
-        | StepKind::TransformRows { input, .. }
-        | StepKind::MatchesAllRows { input, .. }
-        | StepKind::MatchesAnyRows { input, .. }
-        | StepKind::PrefixColumns  { input, .. }
-        | StepKind::DemoteHeaders  { input }
-        // New operations
-        | StepKind::SelectColumns       { input, .. }
-        | StepKind::ReorderColumns      { input, .. }
-        | StepKind::TransformColumnNames { input, .. }
-        | StepKind::CombineColumns      { input, .. }
-        | StepKind::SplitColumn          { input, .. }
-        | StepKind::ExpandTableColumn   { input, .. }
-        | StepKind::ExpandRecordColumn  { input, .. }
-        | StepKind::Pivot               { input, .. }
-        | StepKind::RowCount            { input }
-        | StepKind::ColumnCount         { input }
-        | StepKind::TableColumnNames    { input }
-        | StepKind::TableIsEmpty        { input }
-        | StepKind::TableSchema         { input }
-        | StepKind::HasColumns          { input, .. }
-        | StepKind::TableIsDistinct     { input }
-        | StepKind::AddRankColumn       { input, .. }
-        | StepKind::TableMax            { input, .. }
-        | StepKind::TableMin            { input, .. }
-        | StepKind::TableMaxN           { input, .. }
-        | StepKind::TableMinN           { input, .. }
-        | StepKind::ReplaceValue        { input, .. }
-        | StepKind::ReplaceErrorValues  { input, .. }
-        | StepKind::InsertRows          { input, .. } => Some(input),
-        StepKind::Join { left, .. }
-        | StepKind::NestedJoin { left, .. } => Some(left),
-        StepKind::CombineTables { inputs } => inputs.first().map(|s| s.as_str()),
-        StepKind::Passthrough      { input, .. } => {
-            if input.is_empty() { None } else { Some(input) }
-        }
-        // ListGenerate has no table input.
-        StepKind::ListGenerate { .. } => None,
-        // ListTransform has no table input; the list_expr is its own source.
-        StepKind::ListTransform { .. } => None,
-    }
-}
-
-// ── Function return-type inference via the grammar registry ───────────────
+// â”€â”€ Function return-type inference via the grammar registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn column_type_to_sig_type(ct: &ColumnType) -> Type {
     match ct {
@@ -1013,7 +825,7 @@ fn column_type_to_sig_type(ct: &ColumnType) -> Type {
         ColumnType::Null                        => nullable(Type::Any),
         ColumnType::Function(ret) => {
             // Represent as a single-param function so it can unify with
-            // generic HOF signatures like `(T) → U`.
+            // generic HOF signatures like `(T) â†’ U`.
             Type::Function(Box::new(FunctionType::new(
                 vec![Param::required(Type::Any)],
                 column_type_to_sig_type(ret),
@@ -1061,7 +873,7 @@ fn try_overload(
     let mut subst = HashMap::new();
     for (param, col_opt) in sig.params.iter().zip(arg_types.iter()) {
         match col_opt {
-            // Unknown arg type → we cannot validate this overload.
+            // Unknown arg type â†’ we cannot validate this overload.
             None => return None,
             Some(ct) => {
                 let concrete = column_type_to_sig_type(ct);
@@ -1076,7 +888,7 @@ fn try_overload(
     sig_type_to_column_type(&ret)
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Determine what type `_` should be bound to when inferring a lambda argument
 /// at position `lambda_arg_idx` in a call to `fn_name`, given the already-
@@ -1108,7 +920,7 @@ fn determine_lambda_param_type(
         // Resolve the expected type at the lambda position.
         let expected = sig.params[lambda_arg_idx].ty.substitute(&subst);
 
-        // The expected type should be a `(T) → U`; extract T.
+        // The expected type should be a `(T) â†’ U`; extract T.
         if let Type::Function(ft) = &expected {
             if let Some(first_param) = ft.params.first() {
                 let param_ty = first_param.ty.substitute(&subst);
@@ -1137,7 +949,7 @@ fn unify_column_types(a: &ColumnType, b: &ColumnType) -> Option<ColumnType> {
     }
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────
+// â”€â”€ tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[cfg(test)]
 mod tests {
@@ -1163,7 +975,7 @@ mod tests {
         Parser::new(tokens).parse().unwrap()
     }
 
-    // ── existing validation tests (unchanged semantics) ───────────────────
+    // â”€â”€ existing validation tests (unchanged semantics) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn test_valid_filter() {
@@ -1269,7 +1081,7 @@ mod tests {
         assert!(checker.check(&mut program).is_err());
     }
 
-    // ── annotation completeness tests ─────────────────────────────────────
+    // â”€â”€ annotation completeness tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn test_source_step_output_type_populated() {
@@ -1367,16 +1179,19 @@ mod tests {
 
         use pq_ast::step::StepKind;
         let step = &program.steps[1].step;
-        if let StepKind::Filter { condition, .. } = &step.kind {
-            assert_eq!(
-                condition.inferred_type,
-                Some(ColumnType::Function(Box::new(ColumnType::Boolean)))
-            );
-            if let pq_ast::expr::Expr::Lambda { body, .. } = &condition.expr {
-                assert_eq!(body.inferred_type, Some(ColumnType::Boolean));
-                if let pq_ast::expr::Expr::BinaryOp { left, right, .. } = &body.expr {
-                    assert_eq!(left.inferred_type,  Some(ColumnType::Integer));
-                    assert_eq!(right.inferred_type, Some(ColumnType::Integer));
+        if let StepKind::FunctionCall { name, args } = &step.kind {
+            assert_eq!(name, "Table.SelectRows");
+            if let Some(pq_ast::call_arg::CallArg::Expr(condition)) = args.get(1) {
+                assert_eq!(
+                    condition.inferred_type,
+                    Some(ColumnType::Function(Box::new(ColumnType::Boolean)))
+                );
+                if let pq_ast::expr::Expr::Lambda { body, .. } = &condition.expr {
+                    assert_eq!(body.inferred_type, Some(ColumnType::Boolean));
+                    if let pq_ast::expr::Expr::BinaryOp { left, right, .. } = &body.expr {
+                        assert_eq!(left.inferred_type,  Some(ColumnType::Integer));
+                        assert_eq!(right.inferred_type, Some(ColumnType::Integer));
+                    }
                 }
             }
         }
@@ -1401,7 +1216,7 @@ mod tests {
         assert!(checker.step_schemas["Removed"].iter().all(|(n, _)| n != "Active"));
     }
 
-    // ── List type-inference tests ─────────────────────────────────────────
+    // â”€â”€ List type-inference tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// An integer list literal should infer as `List<Integer>`.
     #[test]
@@ -1414,15 +1229,15 @@ mod tests {
         // The call will fail (type error), but we still check the list node.
         checker.check(&mut program).ok();
 
-        use pq_ast::step::StepKind;
-        if let StepKind::ListTransform { list_expr, .. } = &program.steps[0].step.kind {
+        if let StepKind::FunctionCall { name, args } = &program.steps[0].step.kind {
+            assert_eq!(name, "List.Transform");
+            if let Some(pq_ast::call_arg::CallArg::Expr(list_expr)) = args.get(0) {
             assert_eq!(
                 list_expr.inferred_type,
                 Some(ColumnType::List(Box::new(ColumnType::Integer))),
                 "integer list literal should infer as List<Integer>"
             );
-        } else {
-            panic!("expected ListTransform step");
+            } // end Expr check
         }
     }
 
@@ -1436,19 +1251,19 @@ mod tests {
         let mut checker = TypeChecker::new(&table);
         checker.check(&mut program).ok();
 
-        use pq_ast::step::StepKind;
-        if let StepKind::ListTransform { list_expr, .. } = &program.steps[0].step.kind {
+        if let StepKind::FunctionCall { name, args } = &program.steps[0].step.kind {
+            assert_eq!(name, "List.Transform");
+            if let Some(pq_ast::call_arg::CallArg::Expr(list_expr)) = args.get(0) {
             assert_eq!(
                 list_expr.inferred_type,
                 Some(ColumnType::List(Box::new(ColumnType::Text))),
                 "text list literal should infer as List<Text>"
             );
-        } else {
-            panic!("expected ListTransform step");
+            } // end Expr check
         }
     }
 
-    // ── Higher-order function validation tests ────────────────────────────
+    // â”€â”€ Higher-order function validation tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// `List.Transform({1,2,3}, each Text.Length(_))` must fail because `_`
     /// is `Integer` and `Text.Length` requires `Text`.

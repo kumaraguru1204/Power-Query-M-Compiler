@@ -1,7 +1,8 @@
-use pq_ast::{
+﻿use pq_ast::{
     Program,
     expr::{Expr, ExprNode},
-    step::{StepKind, SortOrder},
+    step::{StepKind, SortOrder, MissingFieldKind, JoinKind},
+    call_arg::CallArg,
 };
 use pq_grammar::operators::UnaryOp;
 use pq_pipeline::Table;
@@ -81,372 +82,70 @@ fn format_step(name: &str, kind: &StepKind) -> String {
 fn format_step_body(kind: &StepKind) -> String {
     match kind {
         StepKind::Source { path, use_headers, delay_types } => {
-            let uh = match use_headers {
-                None        => "null",
-                Some(true)  => "true",
-                Some(false) => "false",
-            };
-            let dt = match delay_types {
-                None        => "null",
-                Some(true)  => "true",
-                Some(false) => "false",
-            };
-            format!("Excel.Workbook(File.Contents(\"{}\"), {}, {})", path, uh, dt)
+            let uh = use_headers.map(|b| if b { ", true" } else { ", false" }).unwrap_or("");
+            let dt = delay_types.map(|b| if b { ", true" } else { ", false" }).unwrap_or("");
+            format!("Excel.Workbook(File.Contents(\"{}\"){}{})", path, uh, dt)
         }
-
-        StepKind::PromoteHeaders { input } => {
-            format!("Table.PromoteHeaders({})", input)
+        StepKind::NavigateSheet { input, item, sheet_kind, field } => {
+            format!("{}{{[Item=\"{}\", Kind=\"{}\"]}}\u{005B}{}\u{005D}", input, item, sheet_kind, field)
         }
-
-        StepKind::ChangeTypes { input, columns } => {
-            let type_list = format_type_list(columns);
-            format!("Table.TransformColumnTypes({}, {})", input, type_list)
-        }
-
-        // condition is Each(inner) — format_expr produces "each <inner>"
-        StepKind::Filter { input, condition } => {
-            format!("Table.SelectRows({}, {})", input, format_expr(condition))
-        }
-
-        // expression is Each(inner) — format_expr produces "each <inner>"
-        StepKind::AddColumn { input, col_name, expression } => {
-            format!(
-                "Table.AddColumn({}, \"{}\", {})",
-                input, col_name, format_expr(expression)
-            )
-        }
-
-        StepKind::RemoveColumns { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.RemoveColumns({}, {})", input, col_list)
-        }
-
-        StepKind::RenameColumns { input, renames } => {
-            let rename_list = format_rename_list(renames);
-            format!("Table.RenameColumns({}, {})", input, rename_list)
-        }
-
-        StepKind::Sort { input, by } => {
-            let sort_list = format_sort_list(by);
-            format!("Table.Sort({}, {})", input, sort_list)
-        }
-
-        // Each transform expression is Each(inner) — format_expr handles it.
-        StepKind::TransformColumns { input, transforms } => {
-            let pairs = transforms
-                .iter()
-                .map(|(col, expr, opt_type)| {
-                    if let Some(t) = opt_type {
-                        format!("{{\"{}\", {}, {}}}", col, format_expr(expr), t.to_m_type())
-                    } else {
-                        format!("{{\"{}\", {}}}", col, format_expr(expr))
-                    }
+        StepKind::ValueBinding { expr } => format_expr(expr),
+        StepKind::FunctionCall { name, args } => {
+            let args_str: Vec<String> = args.iter()
+                .filter_map(|a| match a {
+                    CallArg::OptInt(None) | CallArg::NullableBool(None)
+                    | CallArg::OptMissingField(None) | CallArg::OptCulture(None, _) => None,
+                    _ => Some(format_call_arg(a)),
                 })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Table.TransformColumns({}, {{{}}})", input, pairs)
-        }
-
-        // Aggregate expressions are Each(inner) — format_expr handles them.
-        StepKind::Group { input, by, aggregates } => {
-            let key_list = format_col_list(by);
-            let agg_list = aggregates
-                .iter()
-                .map(|a| format!(
-                    "{{\"{}\", {}, {}}}",
-                    a.name,
-                    format_expr(&a.expression),
-                    a.col_type.to_m_type()
-                ))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Table.Group({}, {}, {{{}}})", input, key_list, agg_list)
-        }
-
-        StepKind::ListGenerate { initial, condition, next, selector } => {
-            let mut s = format!(
-                "List.Generate({}, {}, {}",
-                format_expr(initial),
-                format_expr(condition),
-                format_expr(next),
-            );
-            if let Some(sel) = selector {
-                s.push_str(", ");
-                s.push_str(&format_expr(sel));
-            }
-            s.push(')');
-            s
-        }
-
-        StepKind::Passthrough { input, func_name } => {
-            format!("{}({})", func_name, input)
-        }
-
-        StepKind::ListTransform { list_expr, transform } => {
-            format!(
-                "List.Transform({}, {})",
-                format_expr(list_expr),
-                format_expr(transform)
-            )
-        }
-
-        // ── New row operations ────────────────────────────────────────────
-
-        StepKind::FirstN { input, count } => {
-            format!("Table.FirstN({}, {})", input, format_expr(count))
-        }
-
-        StepKind::LastN { input, count } => {
-            format!("Table.LastN({}, {})", input, format_expr(count))
-        }
-
-        StepKind::Skip { input, count } => {
-            format!("Table.Skip({}, {})", input, format_expr(count))
-        }
-
-        StepKind::Range { input, offset, count } => {
-            format!("Table.Range({}, {}, {})", input, format_expr(offset), format_expr(count))
-        }
-
-        StepKind::RemoveFirstN { input, count } => {
-            format!("Table.RemoveFirstN({}, {})", input, format_expr(count))
-        }
-
-        StepKind::RemoveLastN { input, count } => {
-            format!("Table.RemoveLastN({}, {})", input, format_expr(count))
-        }
-
-        StepKind::RemoveRows { input, offset, count } => {
-            format!("Table.RemoveRows({}, {}, {})", input, format_expr(offset), format_expr(count))
-        }
-
-        StepKind::ReverseRows { input } => {
-            format!("Table.ReverseRows({})", input)
-        }
-
-        StepKind::Distinct { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.Distinct({}, {})", input, col_list)
-        }
-
-        StepKind::Repeat { input, count } => {
-            format!("Table.Repeat({}, {})", input, format_expr(count))
-        }
-
-        StepKind::AlternateRows { input, offset, skip, take } => {
-            format!("Table.AlternateRows({}, {}, {}, {})",
-                input, format_expr(offset), format_expr(skip), format_expr(take))
-        }
-
-        StepKind::FindText { input, text } => {
-            format!("Table.FindText({}, \"{}\")", input, text)
-        }
-
-        StepKind::FillDown { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.FillDown({}, {})", input, col_list)
-        }
-
-        StepKind::FillUp { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.FillUp({}, {})", input, col_list)
-        }
-
-        StepKind::AddIndexColumn { input, col_name, start, step } => {
-            if *start == 0 && *step == 1 {
-                format!("Table.AddIndexColumn({}, \"{}\")", input, col_name)
-            } else if *step == 1 {
-                format!("Table.AddIndexColumn({}, \"{}\", {})", input, col_name, start)
-            } else {
-                format!("Table.AddIndexColumn({}, \"{}\", {}, {})", input, col_name, start, step)
-            }
-        }
-
-        StepKind::DuplicateColumn { input, src_col, new_col } => {
-            format!("Table.DuplicateColumn({}, \"{}\", \"{}\")", input, src_col, new_col)
-        }
-
-        StepKind::Unpivot { input, columns, attr_col, val_col } => {
-            let col_list = format_col_list(columns);
-            format!("Table.Unpivot({}, {}, \"{}\", \"{}\")", input, col_list, attr_col, val_col)
-        }
-
-        StepKind::UnpivotOtherColumns { input, keep_cols, attr_col, val_col } => {
-            let col_list = format_col_list(keep_cols);
-            format!("Table.UnpivotOtherColumns({}, {}, \"{}\", \"{}\")", input, col_list, attr_col, val_col)
-        }
-
-        StepKind::Transpose { input } => {
-            format!("Table.Transpose({})", input)
-        }
-
-        StepKind::CombineTables { inputs } => {
-            let list = inputs.iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Table.Combine({{{}}})", list)
-        }
-
-        StepKind::RemoveRowsWithErrors { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.RemoveRowsWithErrors({}, {})", input, col_list)
-        }
-
-        StepKind::SelectRowsWithErrors { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.SelectRowsWithErrors({}, {})", input, col_list)
-        }
-
-        StepKind::TransformRows { input, transform } => {
-            format!("Table.TransformRows({}, {})", input, format_expr(transform))
-        }
-
-        StepKind::MatchesAllRows { input, condition } => {
-            format!("Table.MatchesAllRows({}, {})", input, format_expr(condition))
-        }
-
-        StepKind::MatchesAnyRows { input, condition } => {
-            format!("Table.MatchesAnyRows({}, {})", input, format_expr(condition))
-        }
-
-        StepKind::PrefixColumns { input, prefix } => {
-            format!("Table.PrefixColumns({}, \"{}\")", input, prefix)
-        }
-
-        StepKind::DemoteHeaders { input } => {
-            format!("Table.DemoteHeaders({})", input)
-        }
-
-        // ── Column operations ────────────────────────────────────────────
-        StepKind::SelectColumns { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.SelectColumns({}, {})", input, col_list)
-        }
-
-        StepKind::ReorderColumns { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.ReorderColumns({}, {})", input, col_list)
-        }
-
-        StepKind::TransformColumnNames { input, transform } => {
-            format!("Table.TransformColumnNames({}, {})", input, format_expr(transform))
-        }
-
-        StepKind::CombineColumns { input, columns, combiner, new_col } => {
-            let col_list = format_col_list(columns);
-            format!("Table.CombineColumns({}, {}, {}, \"{}\")", input, col_list, format_expr(combiner), new_col)
-        }
-
-        StepKind::SplitColumn { input, col_name, splitter } => {
-            format!("Table.SplitColumn({}, \"{}\", {})", input, col_name, format_expr(splitter))
-        }
-
-        StepKind::ExpandTableColumn { input, col_name, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.ExpandTableColumn({}, \"{}\", {})", input, col_name, col_list)
-        }
-
-        StepKind::ExpandRecordColumn { input, col_name, fields } => {
-            let col_list = format_col_list(fields);
-            format!("Table.ExpandRecordColumn({}, \"{}\", {})", input, col_name, col_list)
-        }
-
-        StepKind::Pivot { input, pivot_col, attr_col, val_col } => {
-            let col_list = format_col_list(pivot_col);
-            format!("Table.Pivot({}, {}, \"{}\", \"{}\")", input, col_list, attr_col, val_col)
-        }
-
-        // ── Information functions ────────────────────────────────────────
-        StepKind::RowCount { input } => {
-            format!("Table.RowCount({})", input)
-        }
-
-        StepKind::ColumnCount { input } => {
-            format!("Table.ColumnCount({})", input)
-        }
-
-        StepKind::TableColumnNames { input } => {
-            format!("Table.ColumnNames({})", input)
-        }
-
-        StepKind::TableIsEmpty { input } => {
-            format!("Table.IsEmpty({})", input)
-        }
-
-        StepKind::TableSchema { input } => {
-            format!("Table.Schema({})", input)
-        }
-
-        // ── Membership functions ─────────────────────────────────────────
-        StepKind::HasColumns { input, columns } => {
-            let col_list = format_col_list(columns);
-            format!("Table.HasColumns({}, {})", input, col_list)
-        }
-
-        StepKind::TableIsDistinct { input } => {
-            format!("Table.IsDistinct({})", input)
-        }
-
-        // ── Joins ────────────────────────────────────────────────────────
-        StepKind::Join { left, left_keys, right, right_keys, join_kind } => {
-            let lk = format_col_list(left_keys);
-            let rk = format_col_list(right_keys);
-            format!("Table.Join({}, {}, {}, {}, {})", left, lk, right, rk, join_kind)
-        }
-
-        StepKind::NestedJoin { left, left_keys, right, right_keys, new_col, join_kind } => {
-            let lk = format_col_list(left_keys);
-            let rk = format_col_list(right_keys);
-            format!("Table.NestedJoin({}, {}, {}, {}, \"{}\", {})", left, lk, right, rk, new_col, join_kind)
-        }
-
-        // ── Ordering ─────────────────────────────────────────────────────
-        StepKind::AddRankColumn { input, col_name, by } => {
-            let sort_list = format_sort_list(by);
-            format!("Table.AddRankColumn({}, \"{}\", {})", input, col_name, sort_list)
-        }
-
-        StepKind::TableMax { input, col_name } => {
-            format!("Table.Max({}, \"{}\")", input, col_name)
-        }
-
-        StepKind::TableMin { input, col_name } => {
-            format!("Table.Min({}, \"{}\")", input, col_name)
-        }
-
-        StepKind::TableMaxN { input, count, col_name } => {
-            format!("Table.MaxN({}, {}, \"{}\")", input, format_expr(count), col_name)
-        }
-
-        StepKind::TableMinN { input, count, col_name } => {
-            format!("Table.MinN({}, {}, \"{}\")", input, format_expr(count), col_name)
-        }
-
-        // ── Value operations ─────────────────────────────────────────────
-        StepKind::ReplaceValue { input, old_value, new_value, replacer } => {
-            format!("Table.ReplaceValue({}, {}, {}, {})", input, format_expr(old_value), format_expr(new_value), format_expr(replacer))
-        }
-
-        StepKind::ReplaceErrorValues { input, replacements } => {
-            let pairs = replacements.iter()
-                .map(|(col, expr, opt_type)| {
-                    if let Some(t) = opt_type {
-                        format!("{{\"{}\", {}, {}}}", col, format_expr(expr), t.to_m_type())
-                    } else {
-                        format!("{{\"{}\", {}}}", col, format_expr(expr))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Table.ReplaceErrorValues({}, {{{}}})", input, pairs)
-        }
-
-        StepKind::InsertRows { input, offset } => {
-            format!("Table.InsertRows({}, {})", input, offset)
+                .collect();
+            format!("{}({})", name, args_str.join(", "))
         }
     }
 }
+
+fn format_call_arg(arg: &CallArg) -> String {
+    match arg {
+        CallArg::StepRef(s)       => s.clone(),
+        CallArg::StepRefList(v)   => format!("{{{}}}", v.join(", ")),
+        CallArg::Expr(e)          => format_expr(e),
+        CallArg::Str(s)           => format!("\"{}\"", s),
+        CallArg::ColList(v)       => format_col_list(v),
+        CallArg::RenameList(v)    => format_rename_list(v),
+        CallArg::TypeList(v)      => format_type_list(v),
+        CallArg::BareTypeList(v)  => {
+            let items = v.iter().map(|t| format!("type {}", t.to_m_type())).collect::<Vec<_>>().join(", ");
+            format!("{{{}}}", items)
+        }
+        CallArg::SortList(v)      => format_sort_list(v),
+        CallArg::JoinKindArg(j)   => format!("{}", j),
+        CallArg::AggList(v)       => {
+            let items = v.iter().map(|a| {
+                format!("{{\"{}\" {}, type {}}}", a.name, format_expr(&a.expression), a.col_type.to_m_type())
+            }).collect::<Vec<_>>().join(", ");
+            format!("{{{}}}", items)
+        }
+        CallArg::TransformList(v) => {
+            let items = v.iter().map(|(n, e, t)| {
+                if let Some(ty) = t {
+                    format!("{{\"{}\" {} type {}}}", n, format_expr(e), ty.to_m_type())
+                } else {
+                    format!("{{\"{}\" {}}}", n, format_expr(e))
+                }
+            }).collect::<Vec<_>>().join(", ");
+            format!("{{{}}}", items)
+        }
+        CallArg::Int(n)               => n.to_string(),
+        CallArg::OptInt(n)            => n.map(|i| i.to_string()).unwrap_or_else(|| "null".into()),
+        CallArg::NullableBool(b)      => b.map(|b| b.to_string()).unwrap_or_else(|| "null".into()),
+        CallArg::OptMissingField(m)   => m.as_ref().map(|mf| match mf {
+            MissingFieldKind::Error   => "MissingField.Error".to_string(),
+            MissingFieldKind::Ignore  => "MissingField.Ignore".to_string(),
+            MissingFieldKind::UseNull => "MissingField.UseNull".to_string(),
+        }).unwrap_or_else(|| "null".into()),
+        CallArg::OptCulture(s, _)     => s.as_ref().map(|c| format!("\"{}\"", c)).unwrap_or_else(|| "null".into()),
+    }
+}
+
 
 // ── list formatters ───────────────────────────────────────────────────────
 
@@ -466,6 +165,27 @@ fn format_col_list(columns: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{{}}}", items)
+}
+
+/// Map a `ColumnType` to its bare M type keyword (the part after `type `).
+fn col_type_to_m_bare(ty: &pq_types::ColumnType) -> &'static str {
+    use pq_types::ColumnType;
+    match ty {
+        ColumnType::Text         => "text",
+        ColumnType::Float        => "number",
+        ColumnType::Integer      => "int64",
+        ColumnType::Boolean      => "logical",
+        ColumnType::Date         => "date",
+        ColumnType::DateTime     => "datetime",
+        ColumnType::DateTimeZone => "datetimezone",
+        ColumnType::Duration     => "duration",
+        ColumnType::Time         => "time",
+        ColumnType::Currency     => "currency",
+        ColumnType::Binary       => "binary",
+        ColumnType::Null         => "null",
+        ColumnType::Function(_)
+        | ColumnType::List(_)    => "any",
+    }
 }
 
 fn format_rename_list(renames: &[(String, String)]) -> String {
@@ -496,7 +216,11 @@ pub fn format_program(program: &Program) -> String {
         .map(|b| format_step(&b.name, &b.step.kind))
         .collect::<Vec<_>>()
         .join(",\n");
-    format!("let\n{}\nin\n    {}", lines, program.output)
+    let output = match &program.output_expr {
+        Some(expr) => format_expr(expr),
+        None       => program.output.clone(),
+    };
+    format!("let\n{}\nin\n    {}", lines, output)
 }
 
 /// Generate a base M-like formula from a Table (the starting point).

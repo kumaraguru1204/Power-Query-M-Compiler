@@ -1,10 +1,11 @@
-use pq_diagnostics::Span;
+﻿use pq_diagnostics::Span;
 use pq_grammar::functions::{lookup_function, lookup_qualified, ArgKind};
 use pq_grammar::operators::{Operator, UnaryOp};
 use pq_lexer::token::{Token, TokenKind};
 use pq_ast::{
     expr::{Expr, ExprNode},
-    step::{Step, StepKind, SortOrder, JoinKind, AggregateSpec},
+    step::{Step, StepKind, SortOrder, JoinKind, AggregateSpec, MissingFieldKind},
+    call_arg::CallArg,
     program::{Program, StepBinding},
 };
 use pq_types::ColumnType;
@@ -515,6 +516,14 @@ impl Parser {
 
     fn parse_type_list(&mut self) -> ParseResult<Vec<(String, ColumnType)>> {
         self.expect_token(TokenKind::LBrace)?;
+        // Single-pair shorthand: {"colName", type text}  (no inner braces)
+        if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+            let (col_name, _) = self.expect_string()?;
+            self.expect_token(TokenKind::Comma)?;
+            let col_type = self.parse_m_type()?;
+            self.expect_token(TokenKind::RBrace)?;
+            return Ok(vec![(col_name, col_type)]);
+        }
         let mut pairs = vec![];
         while self.peek_kind() != &TokenKind::RBrace
             && self.peek_kind() != &TokenKind::Eof
@@ -526,6 +535,23 @@ impl Parser {
         }
         self.expect_token(TokenKind::RBrace)?;
         Ok(pairs)
+    }
+
+    /// Parse a bare type list: `{type number, type text, ...}` (no column names).
+    /// Used by `Table.ColumnsOfType`.
+    fn parse_bare_type_list(&mut self) -> ParseResult<Vec<ColumnType>> {
+        self.expect_token(TokenKind::LBrace)?;
+        let mut types = vec![];
+        while self.peek_kind() != &TokenKind::RBrace
+            && self.peek_kind() != &TokenKind::Eof
+        {
+            types.push(self.parse_m_type()?);
+            if self.peek_kind() == &TokenKind::Comma {
+                self.advance();
+            }
+        }
+        self.expect_token(TokenKind::RBrace)?;
+        Ok(types)
     }
 
     fn parse_col_list(&mut self) -> ParseResult<Vec<String>> {
@@ -778,8 +804,27 @@ impl Parser {
     }
 
     /// Parse a list of transform pairs: `{{"col", each expr}, ...}` or `{{"col", each expr, type}, ...}`
+    /// Also handles the single-pair shorthand: `{"col", each expr}` (no inner braces).
     fn parse_transform_list(&mut self) -> ParseResult<Vec<(String, ExprNode, Option<ColumnType>)>> {
         self.expect_token(TokenKind::LBrace)?;
+        // Single-pair shorthand: {"colName", each expr}  (no inner braces)
+        if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+            let (col, _) = self.expect_string()?;
+            self.expect_token(TokenKind::Comma)?;
+            let expr = if self.peek_kind() == &TokenKind::Each {
+                self.parse_each_expr()?
+            } else {
+                self.parse_expr()?
+            };
+            let col_type = if self.peek_kind() == &TokenKind::Comma {
+                self.advance();
+                Some(self.parse_m_type()?)
+            } else {
+                None
+            };
+            self.expect_token(TokenKind::RBrace)?;
+            return Ok(vec![(col, expr, col_type)]);
+        }
         let mut pairs = vec![];
         while self.peek_kind() != &TokenKind::RBrace
             && self.peek_kind() != &TokenKind::Eof
@@ -795,6 +840,13 @@ impl Parser {
 
     // ── step body parser ──────────────────────────────────────────────────
 
+    // ── step body parser ──────────────────────────────────────────────────────
+    //
+    // Parses one M function call step (the part AFTER the opening paren).
+    // For every function registered in pq_grammar, we iterate its ArgKind hints
+    // and parse each arg into a CallArg variant, building a Vec<CallArg>.
+    // The result is always StepKind::FunctionCall { name, args } -- the only
+    // exception is Excel.Workbook which produces StepKind::Source.
     fn parse_step_body(
         &mut self,
         namespace: &str,
@@ -804,30 +856,10 @@ impl Parser {
         let sig = lookup_function(namespace, function)
             .ok_or_else(|| ParseError::UnknownFunction {
                 qualified: format!("{}.{}", namespace, function),
-                span:      fn_span,
+                span:      fn_span.clone(),
             })?;
 
-        // Accumulators for the various argument kinds.
-        let mut step_refs          = vec![];
-        let mut str_args           = vec![];
-        let mut type_list          = None;
-        let mut col_lists: Vec<Vec<String>> = vec![];
-        let mut rename_list        = None;
-        let mut sort_list          = None;
-        let mut each_exprs: Vec<ExprNode> = vec![];
-        let mut int_args           = vec![];
-        let mut value_args         = vec![];
-        let mut record_lit         = None;
-        let mut record_list        = None;
-        let mut aggregate_list     = None;
-        let mut join_kind          = None;
-        let mut transform_list     = None;
-        let mut step_ref_list      = vec![];
-        let mut opt_int_args        = vec![];
-        let mut opt_value_arg       = None::<ExprNode>;
-        let mut opt_record_lit_arg  = None::<Vec<(String, ExprNode)>>;
-        let mut opt_join_kind_arg   = None::<JoinKind>;
-        let mut opt_null_bool_args  = vec![];   // for OptNullableBool
+        let mut args: Vec<CallArg> = Vec::with_capacity(sig.arg_hints.len());
 
         for (i, arg_kind) in sig.arg_hints.iter().enumerate() {
             let is_optional = matches!(
@@ -837,117 +869,127 @@ impl Parser {
                 | ArgKind::OptJoinKind
                 | ArgKind::OptInteger
                 | ArgKind::OptNullableBool
+                | ArgKind::OptMissingField
+                | ArgKind::OptCultureOrRecord
             );
 
             if is_optional {
-                if self.peek_kind() == &TokenKind::RParen {
-                    break;
-                }
+                if self.peek_kind() == &TokenKind::RParen { break; }
                 self.expect_token(TokenKind::Comma)?;
             } else if i > 0 {
                 self.expect_token(TokenKind::Comma)?;
             }
 
-            match arg_kind {
+            let arg: CallArg = match arg_kind {
                 ArgKind::StepRef => {
                     let (name, _) = self.expect_ident()?;
-                    step_refs.push(name);
+                    CallArg::StepRef(name)
                 }
-                // A list-function argument that can be either:
-                //   • a bare step-name identifier (e.g. `MyList`)  → stored as step_ref
-                //   • any expression (e.g. `{1,2,3}`, `List.Range(1,5)`) → stored in value_args
-                //
-                // Disambiguation: a bare step ref is an Ident whose next token is
-                // NOT a dot (which would make it a qualified name / dotted expression).
-                // Everything else is parsed as a full expression.
                 ArgKind::StepRefOrValue => {
-                    let is_bare_step_ref =
-                        matches!(self.peek_kind(), TokenKind::Ident(_))
+                    let is_bare = matches!(self.peek_kind(), TokenKind::Ident(_))
                         && !matches!(self.peek_offset(1), TokenKind::Dot);
-                    if is_bare_step_ref {
+                    if is_bare {
                         let (name, _) = self.expect_ident()?;
-                        step_refs.push(name);
+                        CallArg::StepRef(name)
                     } else {
-                        value_args.push(self.parse_expr()?);
+                        CallArg::Expr(self.parse_expr()?)
                     }
                 }
                 ArgKind::StringLit => {
                     let (s, _) = self.expect_string()?;
-                    str_args.push(s);
+                    CallArg::Str(s)
                 }
                 ArgKind::TypeList => {
-                    type_list = Some(self.parse_type_list()?);
+                    CallArg::TypeList(self.parse_type_list()?)
                 }
                 ArgKind::ColumnList => {
-                    col_lists.push(self.parse_col_list()?);
+                    CallArg::ColList(self.parse_col_list()?)
                 }
-                ArgKind::RenameList => {
-                    rename_list = Some(self.parse_rename_list()?);
-                }
-                ArgKind::SortList => {
-                    sort_list = Some(self.parse_sort_list()?);
-                }
-                ArgKind::EachExpr => {
-                    if self.peek_kind() == &TokenKind::Each {
-                        each_exprs.push(self.parse_each_expr()?);
+                ArgKind::ColumnListOrString => {
+                    if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+                        let (s, _) = self.expect_string()?;
+                        CallArg::ColList(vec![s])
                     } else {
-                        each_exprs.push(self.parse_expr()?);
+                        CallArg::ColList(self.parse_col_list()?)
                     }
                 }
+                ArgKind::RenameList => {
+                    CallArg::RenameList(self.parse_rename_list()?)
+                }
+                ArgKind::SortList => {
+                    CallArg::SortList(self.parse_sort_list()?)
+                }
+                ArgKind::EachExpr => {
+                    let expr = if self.peek_kind() == &TokenKind::Each {
+                        self.parse_each_expr()?
+                    } else {
+                        self.parse_expr()?
+                    };
+                    CallArg::Expr(expr)
+                }
                 ArgKind::Integer => {
-                    int_args.push(self.parse_integer()?);
+                    CallArg::Int(self.parse_integer()?)
                 }
                 ArgKind::Value => {
-                    value_args.push(self.parse_expr()?);
+                    CallArg::Expr(self.parse_expr()?)
                 }
                 ArgKind::RecordLit => {
-                    record_lit = Some(self.parse_record_lit()?);
+                    let fields = self.parse_record_lit()?;
+                    CallArg::Expr(ExprNode::new(Expr::Record(fields), fn_span.clone()))
                 }
                 ArgKind::RecordList => {
-                    record_list = Some(self.parse_record_list()?);
+                    let recs = self.parse_record_list()?;
+                    let items: Vec<ExprNode> = recs.into_iter()
+                        .map(|fields| ExprNode::new(Expr::Record(fields), fn_span.clone()))
+                        .collect();
+                    CallArg::Expr(ExprNode::new(Expr::List(items), fn_span.clone()))
                 }
                 ArgKind::AggregateList => {
-                    aggregate_list = Some(self.parse_aggregate_list()?);
+                    let triples = self.parse_aggregate_list()?;
+                    let specs: Vec<AggregateSpec> = triples.into_iter()
+                        .map(|(name, expression, col_type)| AggregateSpec { name, expression, col_type })
+                        .collect();
+                    CallArg::AggList(specs)
                 }
                 ArgKind::JoinKind => {
-                    join_kind = Some(self.parse_join_kind()?);
+                    CallArg::JoinKindArg(self.parse_join_kind()?)
                 }
                 ArgKind::TransformList => {
-                    transform_list = Some(self.parse_transform_list()?);
+                    CallArg::TransformList(self.parse_transform_list()?)
                 }
                 ArgKind::StepRefList => {
-                    step_ref_list = self.parse_step_ref_list()?;
+                    CallArg::StepRefList(self.parse_step_ref_list()?)
                 }
                 ArgKind::OptInteger => {
-                    opt_int_args.push(self.parse_integer()?);
+                    CallArg::OptInt(Some(self.parse_integer()?))
                 }
                 ArgKind::OptValue => {
-                    opt_value_arg = Some(self.parse_expr()?);
+                    CallArg::Expr(self.parse_expr()?)
                 }
                 ArgKind::OptRecordLit => {
-                    opt_record_lit_arg = Some(self.parse_record_lit()?);
+                    let fields = self.parse_record_lit()?;
+                    CallArg::Expr(ExprNode::new(Expr::Record(fields), fn_span.clone()))
                 }
                 ArgKind::OptJoinKind => {
-                    opt_join_kind_arg = Some(self.parse_join_kind()?);
+                    CallArg::JoinKindArg(self.parse_join_kind()?)
                 }
                 ArgKind::FileContentsArg => {
-                    // Parses:  File . Contents ( "path" )  or  File . Contents ( ident )
                     self.expect_ident_named("File")?;
                     self.expect_token(TokenKind::Dot)?;
                     self.expect_ident_named("Contents")?;
                     self.expect_token(TokenKind::LParen)?;
-                    if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+                    let result = if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
                         let (path, _) = self.expect_string()?;
-                        str_args.push(path);
+                        CallArg::Str(path)
                     } else {
-                        value_args.push(self.parse_expr()?);
-                    }
+                        CallArg::Expr(self.parse_expr()?)
+                    };
                     self.expect_token(TokenKind::RParen)?;
+                    result
                 }
                 ArgKind::OptNullableBool => {
-                    // null → None, true/false → Some(bool)
                     let val = match self.peek_kind() {
-                        TokenKind::NullLit => { self.advance(); None }
+                        TokenKind::NullLit    => { self.advance(); None }
                         TokenKind::BoolLit(b) => { let b = *b; self.advance(); Some(b) }
                         other => {
                             let span = self.current_span();
@@ -958,373 +1000,143 @@ impl Parser {
                             });
                         }
                     };
-                    opt_null_bool_args.push(val);
+                    CallArg::NullableBool(val)
                 }
-            }
+                ArgKind::OptMissingField => {
+                    let (ns, span) = self.expect_ident()?;
+                    if ns != "MissingField" {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "MissingField".into(),
+                            got:      TokenKind::Ident(ns),
+                            span,
+                        });
+                    }
+                    self.expect_token(TokenKind::Dot)?;
+                    let (variant, var_span) = self.expect_ident()?;
+                    let mf = match variant.as_str() {
+                        "Error"   => MissingFieldKind::Error,
+                        "Ignore"  => MissingFieldKind::Ignore,
+                        "UseNull" => MissingFieldKind::UseNull,
+                        other => return Err(ParseError::UnexpectedToken {
+                            expected: "Error, Ignore, or UseNull".into(),
+                            got:      TokenKind::Ident(other.into()),
+                            span:     var_span,
+                        }),
+                    };
+                    CallArg::OptMissingField(Some(mf))
+                }
+                ArgKind::BareTypeList => {
+                    CallArg::BareTypeList(self.parse_bare_type_list()?)
+                }
+                ArgKind::OptCultureOrRecord => {
+                    let mut culture: Option<String> = None;
+                    let mut missing: Option<MissingFieldKind> = None;
+                    if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+                        let (s, _) = self.expect_string()?;
+                        culture = Some(s);
+                    } else {
+                        self.expect_token(TokenKind::LBracket)?;
+                        while self.peek_kind() != &TokenKind::RBracket
+                            && self.peek_kind() != &TokenKind::Eof
+                        {
+                            let (key, _) = self.expect_ident()?;
+                            self.expect_token(TokenKind::Eq)?;
+                            match key.as_str() {
+                                "Culture" => {
+                                    let (s, _) = self.expect_string()?;
+                                    culture = Some(s);
+                                }
+                                "MissingField" => {
+                                    let (ns, ns_span) = self.expect_ident()?;
+                                    if ns != "MissingField" {
+                                        return Err(ParseError::UnexpectedToken {
+                                            expected: "MissingField".into(),
+                                            got:      TokenKind::Ident(ns),
+                                            span:     ns_span,
+                                        });
+                                    }
+                                    self.expect_token(TokenKind::Dot)?;
+                                    let (variant, var_span) = self.expect_ident()?;
+                                    missing = Some(match variant.as_str() {
+                                        "Error"   => MissingFieldKind::Error,
+                                        "Ignore"  => MissingFieldKind::Ignore,
+                                        "UseNull" => MissingFieldKind::UseNull,
+                                        other => return Err(ParseError::UnexpectedToken {
+                                            expected: "Error, Ignore, or UseNull".into(),
+                                            got:      TokenKind::Ident(other.into()),
+                                            span:     var_span,
+                                        }),
+                                    });
+                                }
+                                _ => { let _ = self.parse_expr()?; }
+                            }
+                            if self.peek_kind() == &TokenKind::Comma {
+                                self.advance();
+                            }
+                        }
+                        self.expect_token(TokenKind::RBracket)?;
+                    }
+                    CallArg::OptCulture(culture, missing)
+                }
+            };
+            args.push(arg);
         }
 
-        // Suppress unused-variable warnings for args not yet wired to StepKind variants.
-        let _ = (&int_args, &value_args, &record_lit, &record_list,
-                 &join_kind, &opt_int_args, &opt_value_arg,
-                 &opt_record_lit_arg, &opt_join_kind_arg);
+        // Excel.Workbook is the only function that maps to StepKind::Source.
+        // It uses FileContentsArg (->Str) + OptNullableBool x2.
+        if namespace == "Excel" && function == "Workbook" {
+            let path = args.iter().find_map(|a| a.as_str())
+                .unwrap_or("").to_string();
+            let bools: Vec<Option<bool>> = args.iter()
+                .filter_map(|a| a.as_nullable_bool())
+                .collect();
+            return Ok(StepKind::Source {
+                path,
+                use_headers: bools.first().copied().flatten(),
+                delay_types: bools.get(1).copied().flatten(),
+            });
+        }
 
-        let kind = match (namespace, function) {
-            ("Excel", "Workbook") => StepKind::Source {
-                path:        str_args.remove(0),
-                use_headers: opt_null_bool_args.first().copied().flatten(),
-                delay_types: opt_null_bool_args.get(1).copied().flatten(),
-            },
-            ("Table", "PromoteHeaders") => StepKind::PromoteHeaders {
-                input: step_refs.remove(0),
-            },
-            ("Table", "TransformColumnTypes") => StepKind::ChangeTypes {
-                input:   step_refs.remove(0),
-                columns: type_list.unwrap(),
-            },
-            ("Table", "SelectRows") => StepKind::Filter {
-                input:     step_refs.remove(0),
-                condition: each_exprs.remove(0),
-            },
-            ("Table", "AddColumn") => StepKind::AddColumn {
-                input:      step_refs.remove(0),
-                col_name:   str_args.remove(0),
-                expression: each_exprs.remove(0),
-            },
-            ("Table", "RemoveColumns") => StepKind::RemoveColumns {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "RenameColumns") => StepKind::RenameColumns {
-                input:   step_refs.remove(0),
-                renames: rename_list.unwrap(),
-            },
-            ("Table", "Sort") => StepKind::Sort {
-                input: step_refs.remove(0),
-                by:    sort_list.unwrap(),
-            },
-            ("Table", "TransformColumns") => StepKind::TransformColumns {
-                input:      step_refs.remove(0),
-                transforms: transform_list.unwrap_or_default(),
-            },
-            ("Table", "Group") => StepKind::Group {
-                input:      step_refs.remove(0),
-                by:         col_lists.pop().unwrap_or_default(),
-                aggregates: aggregate_list
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(name, expr, col_type)| AggregateSpec { name, expression: expr, col_type })
-                    .collect(),
-            },
-
-            // ── Simple row operations ────────────────────────────────────
-            ("Table", "FirstN") => StepKind::FirstN {
-                input: step_refs.remove(0),
-                count: value_args.pop().or_else(|| int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy())))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "LastN") => StepKind::LastN {
-                input: step_refs.remove(0),
-                count: value_args.pop().or_else(|| int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy())))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "Skip") => StepKind::Skip {
-                input: step_refs.remove(0),
-                count: value_args.pop().or_else(|| int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy())))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "Range") => {
-                let input  = step_refs.remove(0);
-                let offset = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(0), Span::dummy()));
-                let count  = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy()));
-                StepKind::Range { input, offset, count }
-            },
-            ("Table", "RemoveFirstN") => StepKind::RemoveFirstN {
-                input: step_refs.remove(0),
-                count: value_args.pop().or_else(|| int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy())))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "RemoveLastN") => StepKind::RemoveLastN {
-                input: step_refs.remove(0),
-                count: value_args.pop().or_else(|| int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy())))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "RemoveRows") => {
-                let input  = step_refs.remove(0);
-                let offset = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(0), Span::dummy()));
-                let count  = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy()));
-                StepKind::RemoveRows { input, offset, count }
-            },
-            ("Table", "ReverseRows") => StepKind::ReverseRows {
-                input: step_refs.remove(0),
-            },
-            ("Table", "Distinct") => StepKind::Distinct {
-                input:   step_refs.remove(0),
-                columns: col_lists.pop().unwrap_or_default(),
-            },
-            ("Table", "Repeat") => StepKind::Repeat {
-                input: step_refs.remove(0),
-                count: int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-            },
-            ("Table", "AlternateRows") => {
-                let input  = step_refs.remove(0);
-                let offset = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(0), Span::dummy()));
-                let skip   = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy()));
-                let take   = int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy()));
-                StepKind::AlternateRows { input, offset, skip, take }
-            },
-            ("Table", "FindText") => StepKind::FindText {
-                input: step_refs.remove(0),
-                text:  str_args.remove(0),
-            },
-            ("Table", "FillDown") => StepKind::FillDown {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "FillUp") => StepKind::FillUp {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "AddIndexColumn") => {
-                let input    = step_refs.remove(0);
-                let col_name = str_args.remove(0);
-                let start    = opt_int_args.first().copied().unwrap_or(0);
-                let step     = opt_int_args.get(1).copied().unwrap_or(1);
-                StepKind::AddIndexColumn { input, col_name, start, step }
-            },
-            ("Table", "DuplicateColumn") => StepKind::DuplicateColumn {
-                input:   step_refs.remove(0),
-                src_col: str_args.remove(0),
-                new_col: str_args.remove(0),
-            },
-            ("Table", "Unpivot") => StepKind::Unpivot {
-                input:    step_refs.remove(0),
-                columns:  col_lists.remove(0),
-                attr_col: str_args.remove(0),
-                val_col:  str_args.remove(0),
-            },
-            ("Table", "UnpivotOtherColumns") => StepKind::UnpivotOtherColumns {
-                input:     step_refs.remove(0),
-                keep_cols: col_lists.remove(0),
-                attr_col:  str_args.remove(0),
-                val_col:   str_args.remove(0),
-            },
-            ("Table", "Transpose") => StepKind::Transpose {
-                input: step_refs.remove(0),
-            },
-            ("Table", "Combine") => StepKind::CombineTables {
-                inputs: step_ref_list.clone(),
-            },
-            ("Table", "RemoveRowsWithErrors") => StepKind::RemoveRowsWithErrors {
-                input:   step_refs.remove(0),
-                columns: col_lists.pop().unwrap_or_default(),
-            },
-            ("Table", "SelectRowsWithErrors") => StepKind::SelectRowsWithErrors {
-                input:   step_refs.remove(0),
-                columns: col_lists.pop().unwrap_or_default(),
-            },
-            ("Table", "TransformRows") => StepKind::TransformRows {
-                input:     step_refs.remove(0),
-                transform: each_exprs.remove(0),
-            },
-            ("Table", "MatchesAllRows") => StepKind::MatchesAllRows {
-                input:     step_refs.remove(0),
-                condition: each_exprs.remove(0),
-            },
-            ("Table", "MatchesAnyRows") => StepKind::MatchesAnyRows {
-                input:     step_refs.remove(0),
-                condition: each_exprs.remove(0),
-            },
-            ("Table", "PrefixColumns") => StepKind::PrefixColumns {
-                input:  step_refs.remove(0),
-                prefix: str_args.remove(0),
-            },
-            ("Table", "DemoteHeaders") => StepKind::DemoteHeaders {
-                input: step_refs.remove(0),
-            },
-
-            // ── Column operations ────────────────────────────────────────
-            ("Table", "SelectColumns") => StepKind::SelectColumns {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "ReorderColumns") => StepKind::ReorderColumns {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "TransformColumnNames") => StepKind::TransformColumnNames {
-                input:     step_refs.remove(0),
-                transform: each_exprs.remove(0),
-            },
-            ("Table", "CombineColumns") => StepKind::CombineColumns {
-                input:    step_refs.remove(0),
-                columns:  col_lists.remove(0),
-                combiner: each_exprs.remove(0),
-                new_col:  str_args.remove(0),
-            },
-            ("Table", "SplitColumn") => StepKind::SplitColumn {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-                splitter: each_exprs.remove(0),
-            },
-            ("Table", "ExpandTableColumn") => StepKind::ExpandTableColumn {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-                columns:  col_lists.remove(0),
-            },
-            ("Table", "ExpandRecordColumn") => StepKind::ExpandRecordColumn {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-                fields:   col_lists.remove(0),
-            },
-            ("Table", "Pivot") => StepKind::Pivot {
-                input:     step_refs.remove(0),
-                pivot_col: col_lists.remove(0),
-                attr_col:  str_args.remove(0),
-                val_col:   str_args.remove(0),
-            },
-
-            // ── Information functions ────────────────────────────────────
-            ("Table", "RowCount") | ("Table", "ApproximateRowCount") => StepKind::RowCount {
-                input: step_refs.remove(0),
-            },
-            ("Table", "ColumnCount") => StepKind::ColumnCount {
-                input: step_refs.remove(0),
-            },
-            ("Table", "ColumnNames") => StepKind::TableColumnNames {
-                input: step_refs.remove(0),
-            },
-            ("Table", "IsEmpty") => StepKind::TableIsEmpty {
-                input: step_refs.remove(0),
-            },
-            ("Table", "Schema") => StepKind::TableSchema {
-                input: step_refs.remove(0),
-            },
-
-            // ── Membership functions ─────────────────────────────────────
-            ("Table", "HasColumns") => StepKind::HasColumns {
-                input:   step_refs.remove(0),
-                columns: col_lists.remove(0),
-            },
-            ("Table", "IsDistinct") => StepKind::TableIsDistinct {
-                input: step_refs.remove(0),
-            },
-
-            // ── Joins ────────────────────────────────────────────────────
-            ("Table", "Join") | ("Table", "FuzzyJoin") => StepKind::Join {
-                left:       step_refs.remove(0),
-                left_keys:  col_lists.remove(0),
-                right:      step_refs.remove(0),
-                right_keys: col_lists.remove(0),
-                join_kind:  join_kind.unwrap_or(JoinKind::Inner),
-            },
-            ("Table", "NestedJoin") | ("Table", "FuzzyNestedJoin") => StepKind::NestedJoin {
-                left:       step_refs.remove(0),
-                left_keys:  col_lists.remove(0),
-                right:      step_refs.remove(0),
-                right_keys: col_lists.remove(0),
-                new_col:    str_args.remove(0),
-                join_kind:  join_kind.unwrap_or(JoinKind::Inner),
-            },
-            ("Table", "AddJoinColumn") => StepKind::NestedJoin {
-                left:       step_refs.remove(0),
-                left_keys:  col_lists.remove(0),
-                right:      step_refs.remove(0),
-                right_keys: col_lists.remove(0),
-                new_col:    str_args.remove(0),
-                join_kind:  opt_join_kind_arg.unwrap_or(JoinKind::Left),
-            },
-
-            // ── Ordering ─────────────────────────────────────────────────
-            ("Table", "AddRankColumn") => StepKind::AddRankColumn {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-                by:       sort_list.unwrap_or_default(),
-            },
-            ("Table", "Max") => StepKind::TableMax {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-            },
-            ("Table", "Min") => StepKind::TableMin {
-                input:    step_refs.remove(0),
-                col_name: str_args.remove(0),
-            },
-            ("Table", "MaxN") => StepKind::TableMaxN {
-                input:    step_refs.remove(0),
-                count:    int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-                col_name: str_args.remove(0),
-            },
-            ("Table", "MinN") => StepKind::TableMinN {
-                input:    step_refs.remove(0),
-                count:    int_args.pop().map(|n| ExprNode::new(Expr::IntLit(n), Span::dummy()))
-                    .unwrap_or_else(|| ExprNode::new(Expr::IntLit(1), Span::dummy())),
-                col_name: str_args.remove(0),
-            },
-
-            // ── Value operations ─────────────────────────────────────────
-            ("Table", "ReplaceValue") => StepKind::ReplaceValue {
-                input:     step_refs.remove(0),
-                old_value: value_args.remove(0),
-                new_value: value_args.remove(0),
-                replacer:  each_exprs.remove(0),
-            },
-            ("Table", "ReplaceErrorValues") => StepKind::ReplaceErrorValues {
-                input:        step_refs.remove(0),
-                replacements: transform_list.unwrap_or_default(),
-            },
-            ("Table", "InsertRows") => StepKind::InsertRows {
-                input:  step_refs.remove(0),
-                offset: int_args.pop().unwrap_or(0),
-            },
-            // List.Transform(list_or_step, each fn) ──────────────────────
-            // list_expr may be an inline literal, a nested call, or a step ref.
-            ("List", "Transform") => {
-                let list_expr = if !step_refs.is_empty() {
-                    ExprNode::new(Expr::Identifier(step_refs.remove(0)), Span::dummy())
-                } else {
-                    value_args.remove(0)
-                };
-                StepKind::ListTransform {
-                    list_expr,
-                    transform: each_exprs.remove(0),
-                }
-            }
-            // List.Generate(initial, condition, next, optional selector)
-            // initial  — Value / any expr (incl. zero-param lambda () => x)
-            // condition — EachExpr (predicate)
-            // next      — EachExpr (step function)
-            // selector  — OptValue (optional projection)
-            ("List", "Generate") => {
-                let initial   = value_args.remove(0);
-                let condition = each_exprs.remove(0);
-                let next      = each_exprs.remove(0);
-                let selector  = opt_value_arg;
-                StepKind::ListGenerate { initial, condition, next, selector }
-            }
-            _ => StepKind::Passthrough {
-                input: step_refs.pop()
-                    .or_else(|| step_ref_list.first().cloned())
-                    .unwrap_or_default(),
-                func_name: format!("{}.{}", namespace, function),
-            },
-        };
-
-        Ok(kind)
+        // Every other registered M function -> generic FunctionCall.
+        let name = format!("{}.{}", namespace, function);
+        Ok(StepKind::FunctionCall { name, args })
     }
 
     // ── top-level program parser ──────────────────────────────────────────
 
     fn parse_binding(&mut self) -> ParseResult<StepBinding> {
-        let (name, name_span)   = self.expect_ident()?;
+        let (name, name_span) = self.expect_ident()?;
         self.expect_token(TokenKind::Eq)?;
+
+        // Detect workbook navigation: `Ident { [ ... ] } [ Ident ]`.
+        // This is the standard sheet selector that follows a Source step,
+        // e.g. `Sheet = Source{[Item="X", Kind="Sheet"]}[Data]`.
+        if matches!(self.peek_kind(), TokenKind::Ident(_))
+            && matches!(self.peek_offset(1), TokenKind::LBrace)
+            && matches!(self.peek_offset(2), TokenKind::LBracket)
+        {
+            let (step_kind, step_span) = self.parse_navigate_sheet()?;
+            let step                   = Step::new(step_kind, step_span);
+            return Ok(StepBinding::new(name, name_span, step));
+        }
+
+        // Detect direct value bindings: `Name = <non-call expression>`.
+        //
+        // A binding is a value binding when the RHS does NOT start with
+        // a function-call shape `Ident(.Ident)*(`.  Everything else —
+        // literals, list / record literals, lambdas, identifier
+        // references, parenthesised expressions, etc. — becomes a
+        // [`StepKind::ValueBinding`].
+        if Self::is_value_binding_start(self) {
+            let expr = self.parse_expr()?;
+            let span = expr.span.clone();
+            return Ok(StepBinding::new(
+                name,
+                name_span,
+                Step::new(StepKind::ValueBinding { expr }, span),
+            ));
+        }
+
         let (ns, func, fn_span) = self.parse_qualified_name()?;
         let lparen_span         = self.expect_token(TokenKind::LParen)?;
         let step_kind           = self.parse_step_body(&ns, &func, fn_span.clone())?;
@@ -1332,6 +1144,93 @@ impl Parser {
         let step_span           = fn_span.merge(&lparen_span);
         let step                = Step::new(step_kind, step_span);
         Ok(StepBinding::new(name, name_span, step))
+    }
+
+    /// Look-ahead heuristic: does the next token (and its successors) look
+    /// like a function-call step (`Ident(.Ident)*(`)?  If not, the binding
+    /// must be a value binding parsed as a generic expression.
+    fn is_value_binding_start(p: &Self) -> bool {
+        // Anything that is clearly not a function call can be parsed as
+        // a value expression.
+        match p.peek_kind() {
+            // Literals
+            TokenKind::IntLit(_)
+            | TokenKind::FloatLit(_)
+            | TokenKind::StringLit(_)
+            | TokenKind::BoolLit(_)
+            | TokenKind::NullLit
+            // Compound value forms
+            | TokenKind::LBrace          // list literal {...}
+            | TokenKind::LBracket        // record literal [...]
+            | TokenKind::Each            // each lambda
+            | TokenKind::Minus           // unary -
+            | TokenKind::Not             // unary not
+                => true,
+
+            // `(...)` could be a parenthesised expression OR an explicit
+            // lambda `(x) => ...`. Either way it's a value expression.
+            TokenKind::LParen => true,
+
+            // For an identifier RHS, walk the qualified name and check
+            // whether it terminates in `(` (call) or anything else (ref).
+            TokenKind::Ident(_) => {
+                let mut i = 1;
+                loop {
+                    match p.peek_offset(i) {
+                        TokenKind::Dot => i += 2,             // skip `.Ident`
+                        TokenKind::LParen => return false,    // call → existing path
+                        _ => return true,                     // bare ref / op
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Parse a workbook navigation expression of the form
+    /// `Source{[Item="Sheet1", Kind="Sheet"]}[Data]`.
+    ///
+    /// The leading identifier names the upstream `Source` step. The braces
+    /// hold a record literal whose `Item=` and `Kind=` fields select a single
+    /// row from the navigation table; the trailing bracket field-access
+    /// extracts the actual sheet table from that row.
+    fn parse_navigate_sheet(&mut self) -> ParseResult<(StepKind, Span)> {
+        let (input, input_span) = self.expect_ident()?;
+        self.expect_token(TokenKind::LBrace)?;
+
+        // Parse the inner record literal `[Field = "value", ...]`.
+        self.expect_token(TokenKind::LBracket)?;
+        let mut item       = String::new();
+        let mut sheet_kind = String::new();
+        while self.peek_kind() != &TokenKind::RBracket
+            && self.peek_kind() != &TokenKind::Eof
+        {
+            let (fname, fspan) = self.expect_ident()?;
+            self.expect_token(TokenKind::Eq)?;
+            let (val, _)       = self.expect_string()?;
+            match fname.as_str() {
+                "Item" => item = val,
+                "Kind" => sheet_kind = val,
+                other  => return Err(ParseError::UnexpectedToken {
+                    expected: "'Item' or 'Kind'".into(),
+                    got:      TokenKind::Ident(other.to_string()),
+                    span:     fspan,
+                }),
+            }
+            if self.peek_kind() == &TokenKind::Comma {
+                self.advance();
+            }
+        }
+        self.expect_token(TokenKind::RBracket)?;
+        self.expect_token(TokenKind::RBrace)?;
+
+        // Trailing `[Data]` field access.
+        self.expect_token(TokenKind::LBracket)?;
+        let (field, _)   = self.expect_ident()?;
+        let end_span     = self.expect_token(TokenKind::RBracket)?;
+        let span         = input_span.merge(&end_span);
+
+        Ok((StepKind::NavigateSheet { input, item, sheet_kind, field }, span))
     }
 
     pub fn parse(&mut self) -> ParseResult<Program> {
@@ -1349,8 +1248,16 @@ impl Parser {
                 }),
             }
         }
-        let (output, output_span) = self.expect_ident()?;
-        Ok(Program { steps, output, output_span })
+        let in_expr = self.parse_expr()?;
+        // Bare-identifier output keeps full back-compat: store the name
+        // directly and leave `output_expr` as None.  Anything else
+        // (FunctionCall, FieldAccess, arithmetic, etc.) is preserved in
+        // `output_expr`; `output` becomes a placeholder.
+        let (output, output_span, output_expr) = match &in_expr.expr {
+            Expr::Identifier(name) => (name.clone(), in_expr.span.clone(), None),
+            _                      => ("<expr>".to_string(), in_expr.span.clone(), Some(in_expr.clone())),
+        };
+        Ok(Program { steps, output, output_span, output_expr })
     }
 }
 
@@ -1394,11 +1301,12 @@ mod tests {
         "#);
         assert_eq!(p.steps.len(), 2);
         // condition must be Lambda { param: "_", body: BinaryOp(...) }
-        let cond = match &p.steps[1].step.kind {
-            StepKind::Filter { condition, .. } => condition,
-            _ => panic!("expected Filter"),
-        };
-        assert!(matches!(cond.expr, Expr::Lambda { .. }));
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.SelectRows");
+            if let Some(pq_ast::call_arg::CallArg::Expr(cond)) = args.get(1) {
+                assert!(matches!(cond.expr, Expr::Lambda { .. }));
+            } else { panic!("expected Expr arg"); }
+        } else { panic!("expected FunctionCall"); }
     }
 
     #[test]
@@ -1435,11 +1343,12 @@ mod tests {
                 WithBonus
         "#);
         assert_eq!(p.steps.len(), 2);
-        let expr = match &p.steps[1].step.kind {
-            StepKind::AddColumn { expression, .. } => expression,
-            _ => panic!("expected AddColumn"),
-        };
-        assert!(matches!(expr.expr, Expr::Lambda { .. }));
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.AddColumn");
+            if let Some(pq_ast::call_arg::CallArg::Expr(expr)) = args.get(2) {
+                assert!(matches!(expr.expr, Expr::Lambda { .. }));
+            } else { panic!("expected Expr arg"); }
+        } else { panic!("expected FunctionCall"); }
     }
 
     #[test]
@@ -1500,7 +1409,7 @@ mod tests {
                 Transformed
         "#);
         assert_eq!(p.steps.len(), 2);
-        assert!(matches!(p.steps[1].step.kind, StepKind::TransformColumns { .. }));
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "Table.TransformColumns"));
     }
 
     #[test]
@@ -1513,7 +1422,7 @@ mod tests {
                 Grouped
         "#);
         assert_eq!(p.steps.len(), 2);
-        assert!(matches!(p.steps[1].step.kind, StepKind::Group { .. }));
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "Table.Group"));
     }
 
     #[test]
@@ -1525,15 +1434,16 @@ mod tests {
             in
                 Filtered
         "#);
-        let cond = match &p.steps[1].step.kind {
-            StepKind::Filter { condition, .. } => condition,
-            _ => panic!(),
-        };
-        if let Expr::Lambda { body: inner, .. } = &cond.expr {
-            if let Expr::BinaryOp { left, .. } = &inner.expr {
-                assert!(matches!(left.expr, Expr::ColumnAccess(_)));
-            } else { panic!("expected BinaryOp"); }
-        } else { panic!("expected Lambda"); }
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.SelectRows");
+            if let Some(pq_ast::call_arg::CallArg::Expr(cond)) = args.get(1) {
+                if let Expr::Lambda { body: inner, .. } = &cond.expr {
+                    if let Expr::BinaryOp { left, .. } = &inner.expr {
+                        assert!(matches!(left.expr, Expr::ColumnAccess(_)));
+                    } else { panic!("expected BinaryOp"); }
+                } else { panic!("expected Lambda"); }
+            } else { panic!("expected Expr arg"); }
+        } else { panic!("expected FunctionCall"); }
     }
 
     #[test]
@@ -1587,10 +1497,10 @@ mod tests {
                 Result
         "#);
         assert_eq!(p.steps.len(), 1);
-        // Now produces ListTransform, not Passthrough.
+        // Now produces FunctionCall(List.Transform).
         assert!(matches!(
             &p.steps[0].step.kind,
-            StepKind::ListTransform { .. }
+            StepKind::FunctionCall { name, .. } if name == "List.Transform"
         ));
     }
 
@@ -1606,11 +1516,13 @@ mod tests {
                 Result
         "#);
         assert_eq!(p.steps.len(), 2);
-        // Second step is ListTransform with list_expr = Identifier("MyList").
-        if let StepKind::ListTransform { list_expr, .. } = &p.steps[1].step.kind {
-            assert!(matches!(&list_expr.expr, Expr::Identifier(name) if name == "MyList"));
+        // Second step is List.Transform with list_expr = Identifier("MyList").
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "List.Transform");
+            let step_ref = args.get(0).and_then(|a| a.as_step_ref());
+            assert_eq!(step_ref, Some("MyList"), "first arg should be StepRef(MyList)");
         } else {
-            panic!("expected ListTransform, got {:?}", p.steps[1].step.kind);
+            panic!("expected FunctionCall, got {:?}", p.steps[1].step.kind);
         }
     }
 
@@ -1625,11 +1537,14 @@ mod tests {
                 Result
         "#);
         assert_eq!(p.steps.len(), 1);
-        // FunctionCall in list_expr position → ListTransform with a FunctionCall node.
-        if let StepKind::ListTransform { list_expr, .. } = &p.steps[0].step.kind {
-            assert!(matches!(&list_expr.expr, Expr::FunctionCall { name, .. } if name == "List.Range"));
+        // FunctionCall in list_expr position → List.Transform with a FunctionCall node.
+        if let StepKind::FunctionCall { name, args } = &p.steps[0].step.kind {
+            assert_eq!(name, "List.Transform");
+            if let Some(pq_ast::call_arg::CallArg::Expr(list_expr)) = args.get(0) {
+                assert!(matches!(&list_expr.expr, Expr::FunctionCall { name: ref n, .. } if n == "List.Range"));
+            } else { panic!("expected Expr arg"); }
         } else {
-            panic!("expected ListTransform, got {:?}", p.steps[0].step.kind);
+            panic!("expected FunctionCall, got {:?}", p.steps[0].step.kind);
         }
     }
 
@@ -1642,7 +1557,7 @@ mod tests {
         assert_eq!(p.steps.len(), 1);
         assert!(matches!(
             &p.steps[0].step.kind,
-            StepKind::Passthrough { func_name, .. } if func_name == "List.Sum"
+            StepKind::FunctionCall { name, .. } if name == "List.Sum"
         ));
     }
 
@@ -1655,7 +1570,7 @@ mod tests {
         assert_eq!(p.steps.len(), 1);
         assert!(matches!(
             &p.steps[0].step.kind,
-            StepKind::Passthrough { func_name, .. } if func_name == "Text.Combine"
+            StepKind::FunctionCall { name, .. } if name == "Text.Combine"
         ));
     }
 
@@ -1670,12 +1585,15 @@ mod tests {
             in
                 Sorted
         "#);
-        if let StepKind::Sort { by, .. } = &p.steps[1].step.kind {
-            assert_eq!(by.len(), 2);
-            assert_eq!(by[0], ("Name".into(), SortOrder::Ascending));
-            assert_eq!(by[1], ("Age".into(), SortOrder::Descending));
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.Sort");
+            if let Some(pq_ast::call_arg::CallArg::SortList(by)) = args.get(1) {
+                assert_eq!(by.len(), 2);
+                assert_eq!(by[0], ("Name".into(), SortOrder::Ascending));
+                assert_eq!(by[1], ("Age".into(), SortOrder::Descending));
+            } else { panic!("expected SortList arg"); }
         } else {
-            panic!("expected Sort");
+            panic!("expected FunctionCall");
         }
     }
 
@@ -1688,16 +1606,19 @@ mod tests {
             in
                 Grouped
         "#);
-        if let StepKind::Group { aggregates, .. } = &p.steps[1].step.kind {
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.Group");
+            if let Some(pq_ast::call_arg::CallArg::AggList(aggregates)) = args.get(2) {
             assert_eq!(aggregates.len(), 1);
             // Default type should be Float
             assert_eq!(aggregates[0].col_type, ColumnType::Float);
+            } else { panic!("expected AggList arg"); }
         } else {
-            panic!("expected Group");
+            panic!("expected FunctionCall");
+            panic!("expected FunctionCall");
         }
     }
 
-    #[test]
     fn test_ampersand_concat_end_to_end() {
         let p = parse(r#"
             let
@@ -1707,13 +1628,13 @@ mod tests {
                 WithCol
         "#);
         assert_eq!(p.steps.len(), 2);
-        if let StepKind::AddColumn { expression, .. } = &p.steps[1].step.kind {
-            assert!(matches!(expression.expr, Expr::Lambda { .. }));
-        } else {
-            panic!("expected AddColumn");
-        }
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.AddColumn");
+            if let Some(pq_ast::call_arg::CallArg::Expr(expression)) = args.get(2) {
+                assert!(matches!(expression.expr, Expr::Lambda { .. }));
+            } else { panic!("expected Expr arg"); }
+        } else { panic!("expected FunctionCall"); }
     }
-
     #[test]
     fn test_nested_join_dual_step_refs_col_lists() {
         let p = parse(r#"
@@ -1725,13 +1646,18 @@ mod tests {
                 Joined
         "#);
         assert_eq!(p.steps.len(), 3);
-        assert!(matches!(
-            &p.steps[2].step.kind,
-            StepKind::NestedJoin { left, left_keys, right, right_keys, new_col, join_kind }
-                if left == "Source" && right == "Other" && new_col == "Merged"
-                && left_keys == &["ID"] && right_keys == &["ID"]
-                && matches!(join_kind, pq_ast::step::JoinKind::Inner)
-        ));
+        if let StepKind::FunctionCall { name, args } = &p.steps[2].step.kind {
+            assert_eq!(name, "Table.NestedJoin");
+            let left  = args.get(0).and_then(|a| a.as_step_ref()).unwrap_or("");
+            let right = args.get(2).and_then(|a| a.as_step_ref()).unwrap_or("");
+            let new_col = args.get(4).and_then(|a| a.as_str()).unwrap_or("");
+            let left_keys = args.get(1).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+            let right_keys = args.get(3).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+            let join_kind = args.get(5).and_then(|a| a.as_join_kind());
+            assert_eq!(left, "Source"); assert_eq!(right, "Other"); assert_eq!(new_col, "Merged");
+            assert_eq!(left_keys, &["ID"]); assert_eq!(right_keys, &["ID"]);
+            assert!(matches!(join_kind, Some(&pq_ast::step::JoinKind::Inner)));
+        } else { panic!("expected FunctionCall"); }
     }
 
     #[test]
@@ -1743,13 +1669,15 @@ mod tests {
             in
                 Typed
         "#);
-        if let StepKind::ChangeTypes { columns, .. } = &p.steps[1].step.kind {
-            assert_eq!(columns[0].1, ColumnType::Float);
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.TransformColumnTypes");
+            if let Some(pq_ast::call_arg::CallArg::TypeList(columns)) = args.get(1) {
+                assert_eq!(columns[0].1, ColumnType::Float);
+            } else { panic!("expected TypeList arg"); }
         } else {
-            panic!("expected ChangeTypes");
+            panic!("expected FunctionCall");
         }
     }
-
     #[test]
     fn test_explicit_lambda_in_each_position() {
         let p = parse(r#"
@@ -1759,10 +1687,15 @@ mod tests {
             in
                 Filtered
         "#);
-        if let StepKind::Filter { condition, .. } = &p.steps[1].step.kind {
-            assert!(matches!(condition.expr, Expr::Lambda { .. }));
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.SelectRows");
+            if let Some(CallArg::Expr(condition)) = args.get(1) {
+                assert!(matches!(condition.expr, Expr::Lambda { .. }));
+            } else {
+                panic!("expected Expr arg for condition");
+            }
         } else {
-            panic!("expected Filter");
+            panic!("expected FunctionCall");
         }
     }
 
@@ -1777,24 +1710,30 @@ mod tests {
             in
                 Added
         "#);
-        if let StepKind::AddColumn { expression, col_name, .. } = &p.steps[1].step.kind {
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.AddColumn");
+            let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
             assert_eq!(col_name, "DoubleAge");
-            if let Expr::Lambda { params, body } = &expression.expr {
-                assert_eq!(params, &["row"]);
-                assert!(matches!(body.expr, Expr::BinaryOp { .. }),
-                    "body should be a BinaryOp, got {:?}", body.expr);
-                if let Expr::BinaryOp { left, .. } = &body.expr {
-                    assert!(matches!(left.expr, Expr::FieldAccess { .. }),
-                        "left side of * should be FieldAccess, got {:?}", left.expr);
-                    if let Expr::FieldAccess { field, .. } = &left.expr {
-                        assert_eq!(field, "Age");
+            if let Some(CallArg::Expr(expression)) = args.get(2) {
+                if let Expr::Lambda { params, body } = &expression.expr {
+                    assert_eq!(params, &["row"]);
+                    assert!(matches!(body.expr, Expr::BinaryOp { .. }),
+                        "body should be a BinaryOp, got {:?}", body.expr);
+                    if let Expr::BinaryOp { left, .. } = &body.expr {
+                        assert!(matches!(left.expr, Expr::FieldAccess { .. }),
+                            "left side of * should be FieldAccess, got {:?}", left.expr);
+                        if let Expr::FieldAccess { field, .. } = &left.expr {
+                            assert_eq!(field, "Age");
+                        }
                     }
+                } else {
+                    panic!("expected Lambda, got {:?}", expression.expr);
                 }
             } else {
-                panic!("expected Lambda, got {:?}", expression.expr);
+                panic!("expected Expr arg for expression");
             }
         } else {
-            panic!("expected AddColumn");
+            panic!("expected FunctionCall");
         }
     }
 
@@ -1807,11 +1746,16 @@ mod tests {
             in
                 Transformed
         "#);
-        if let StepKind::TransformColumns { transforms, .. } = &p.steps[1].step.kind {
-            assert_eq!(transforms.len(), 1);
-            assert_eq!(transforms[0].2, Some(ColumnType::Float));
+        if let StepKind::FunctionCall { name, args } = &p.steps[1].step.kind {
+            assert_eq!(name, "Table.TransformColumns");
+            if let Some(CallArg::TransformList(transforms)) = args.get(1) {
+                assert_eq!(transforms.len(), 1);
+                assert_eq!(transforms[0].2, Some(ColumnType::Float));
+            } else {
+                panic!("expected TransformList arg");
+            }
         } else {
-            panic!("expected TransformColumns");
+            panic!("expected FunctionCall");
         }
     }
 
@@ -1846,5 +1790,27 @@ mod tests {
         let result = Parser::new(tokens).parse();
         assert!(result.is_err(), "List.Rage is not a valid function and should be a parse error");
     }
-}
 
+    #[test]
+    fn test_list_select_inline() {
+        let p = parse(r#"let X = List.Select({1, -3, 4, 9, -2}, each _ > 0) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Select"));
+    }
+
+    #[test]
+    fn test_list_select_step_ref() {
+        let p = parse(r#"
+            let
+                Source   = {1, 2, 3, 4, 5},
+                Filtered = List.Select(Source, each _ > 2)
+            in Filtered
+        "#);
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Select"));
+    }
+
+    #[test]
+    fn test_list_select_nested_call() {
+        let p = parse(r#"let X = List.Select(List.Range({1,2,3,4,5}, 0, 3), each _ > 1) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Select"));
+    }
+}

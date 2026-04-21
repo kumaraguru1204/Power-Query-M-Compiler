@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug M_Engine (main)",
+            "cargo": {
+                "args": ["build", "--bin=M_Engine"],
+                "filter": { "name": "M_Engine", "kind": "bin" }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug cli",
+            "cargo": {
+                "args": ["build", "--bin=cli"],
+                "filter": { "name": "cli", "kind": "bin" }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug web",
+            "cargo": {
+                "args": ["build", "--bin=web"],
+                "filter": { "name": "web", "kind": "bin" }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
