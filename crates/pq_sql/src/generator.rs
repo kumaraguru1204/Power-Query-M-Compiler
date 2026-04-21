@@ -794,6 +794,128 @@ impl Generator {
                     }
 
                     // â”€â”€ ListSelect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // -- List.Intersect -------------------------------------------
+                    // N-ary intersection of a list-of-lists.
+                    // For a literal outer list of literal inner lists, emit SQL
+                    // INTERSECT. For other shapes, fall through to the runtime executor.
+                    // NOTE: SQL INTERSECT uses set semantics; the runtime executor
+                    // correctly honours multiset (MIN multiplicity) semantics.
+                    "List.Intersect" => {
+                        let body = match args.first() {
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::List(outer_items) => {
+                                    let parts: Vec<String> = outer_items.iter().filter_map(|inner| {
+                                        if let Expr::List(items) = &inner.expr {
+                                            let rows = items.iter()
+                                                .map(|i| format!("SELECT {} AS \"Value\"", emit_expr(i)))
+                                                .collect::<Vec<_>>()
+                                                .join(" UNION ALL ");
+                                            Some(format!("({})", rows))
+                                        } else {
+                                            None
+                                        }
+                                    }).collect();
+                                    if parts.is_empty() {
+                                        "    SELECT NULL AS \"Value\" WHERE 1=0".to_string()
+                                    } else {
+                                        format!("    {}", parts.join(" INTERSECT "))
+                                    }
+                                }
+                                _ => format!("    SELECT \"Value\" FROM {} WHERE 1=1", emit_expr(e)),
+                            },
+                            Some(CallArg::StepRef(s)) => {
+                                format!("    SELECT \"Value\" FROM {} WHERE 1=1", s)
+                            }
+                            _ => "    SELECT NULL AS \"Value\" WHERE 1=0".to_string(),
+                        };
+                        (body, vec![("Value".to_string(), ColumnType::Text)])
+                    }
+
+                    // -- List.Difference ------------------------------------------
+                    // NOTE: SQL fallback uses set semantics (NOT IN); true multiset
+                    // diff requires ROW_NUMBER() partitioning. The runtime executor
+                    // correctly honours multiset semantics.
+                    "List.Difference" => {
+                        let list1_sql = match args.first() {
+                            Some(CallArg::StepRef(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::List(items) => {
+                                    let rows = items.iter()
+                                        .map(|item| format!("SELECT {} AS \"Value\"", emit_expr(item)))
+                                        .collect::<Vec<_>>()
+                                        .join(" UNION ALL ");
+                                    format!("({})", rows)
+                                }
+                                _ => emit_expr(e),
+                            },
+                            _ => String::new(),
+                        };
+                        let list2_sql = match args.get(1) {
+                            Some(CallArg::StepRef(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::List(items) => {
+                                    let rows = items.iter()
+                                        .map(|item| format!("SELECT {} AS \"Value\"", emit_expr(item)))
+                                        .collect::<Vec<_>>()
+                                        .join(" UNION ALL ");
+                                    format!("({})", rows)
+                                }
+                                _ => emit_expr(e),
+                            },
+                            _ => String::new(),
+                        };
+                        if !list1_sql.is_empty() && !list2_sql.is_empty() {
+                            let body = format!(
+                                "    SELECT \"Value\" FROM {} t1 WHERE \"Value\" NOT IN (SELECT \"Value\" FROM {} t2)",
+                                list1_sql, list2_sql
+                            );
+                            (body, vec![("Value".to_string(), ColumnType::Text)])
+                        } else {
+                            ("    SELECT NULL AS \"Value\"".to_string(), vec![("Value".to_string(), ColumnType::Text)])
+                        }
+                    }
+
+                    // -- List.RemoveItems -----------------------------------------
+                    "List.RemoveItems" => {
+                        let list1_sql = match args.first() {
+                            Some(CallArg::StepRef(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::List(items) => {
+                                    let rows = items.iter()
+                                        .map(|item| format!("SELECT {} AS \"Value\"", emit_expr(item)))
+                                        .collect::<Vec<_>>()
+                                        .join(" UNION ALL ");
+                                    format!("({})", rows)
+                                }
+                                _ => emit_expr(e),
+                            },
+                            _ => String::new(),
+                        };
+                        let list2_sql = match args.get(1) {
+                            Some(CallArg::StepRef(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::List(items) => {
+                                    let rows = items.iter()
+                                        .map(|item| format!("SELECT {} AS \"Value\"", emit_expr(item)))
+                                        .collect::<Vec<_>>()
+                                        .join(" UNION ALL ");
+                                    format!("({})", rows)
+                                }
+                                _ => emit_expr(e),
+                            },
+                            _ => String::new(),
+                        };
+                        if !list1_sql.is_empty() && !list2_sql.is_empty() {
+                            let body = format!(
+                                "    SELECT \"Value\" FROM {} t1 WHERE \"Value\" NOT IN (SELECT \"Value\" FROM {} t2)",
+                                list1_sql, list2_sql
+                            );
+                            (body, vec![("Value".to_string(), ColumnType::Text)])
+                        } else {
+                            ("    SELECT NULL AS \"Value\"".to_string(), vec![("Value".to_string(), ColumnType::Text)])
+                        }
+                    }
+
                     "List.Select" => {
                         let list_expr = args.first().and_then(|a| a.as_expr());
                         let predicate = args.get(1).and_then(|a| a.as_expr());

@@ -1813,4 +1813,62 @@ mod tests {
         let p = parse(r#"let X = List.Select(List.Range({1,2,3,4,5}, 0, 3), each _ > 1) in X"#);
         assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Select"));
     }
+
+    // ── List.Difference ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_difference_two_literals() {
+        let p = parse(r#"let X = List.Difference({1, 2, 3, 4, 5}, {4, 5, 3}) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Difference"));
+    }
+
+    #[test]
+    fn test_list_difference_with_each_criteria() {
+        let p = parse(r#"let X = List.Difference({"a","B"}, {"A","b"}, each Text.Lower(_)) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "List.Difference" && args.len() == 3));
+    }
+
+    #[test]
+    fn test_list_difference_two_arg_lambda_criteria() {
+        let p = parse(r#"let X = List.Difference({1,2,3}, {2}, (x, y) => x = y) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "List.Difference" && args.len() == 3));
+    }
+
+    #[test]
+    fn test_list_difference_nested_calls() {
+        let p = parse(r#"let X = List.Difference(List.Range({1,2,3,4,5}, 0, 4), List.Distinct({2,2,4})) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Difference"));
+    }
+
+    // ── List.Intersect ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_intersect_inline_lists() {
+        let p = parse(r#"let X = List.Intersect({{1, 2, 3}, {2, 3, 5}, {2, 3, 7}}) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "List.Intersect" && args.len() == 1));
+    }
+
+    #[test]
+    fn test_list_intersect_step_ref() {
+        let p = parse(r#"
+            let
+                A = {1, 2, 3},
+                B = {2, 3, 4},
+                X = List.Intersect({A, B})
+            in X
+        "#);
+        assert!(matches!(&p.steps[2].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Intersect"));
+    }
+
+    #[test]
+    fn test_list_intersect_with_each_criteria() {
+        let p = parse(r#"let X = List.Intersect({{"a","B"}, {"A","b"}}, each Text.Lower(_)) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "List.Intersect" && args.len() == 2));
+    }
+
+    #[test]
+    fn test_list_intersect_nested_call() {
+        let p = parse(r#"let X = List.Intersect(List.Distinct({1, 2, 2, 3})) in X"#);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Intersect"));
+    }
 }

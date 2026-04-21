@@ -545,6 +545,8 @@ These appear inside `each` lambdas / `AddColumn` expressions as `Expr::FunctionC
 |:---------|:-------:|:----------:|:--------:|:------:|
 | `List.Transform` *(step)* | ✅ | ✅ | ✅ | ✅ Full |
 | `List.Select` | ✅ | ✅ | 🔲 | ⚠️ Stub |
+| `List.Difference` | ✅ | ✅ | ✅ | ✅ Full (equationCriteria ignored at runtime — default equality only; SQL uses set semantics) |
+| `List.Intersect` | ✅ | ✅ | ✅ | ✅ Full (equationCriteria ignored at runtime; SQL INTERSECT used for literal lists, runtime handles general case) |
 | `List.Count` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Sum` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Average` | ✅ | ✅ | 🔲 | ⚠️ Stub |

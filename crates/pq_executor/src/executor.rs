@@ -97,14 +97,13 @@ impl Executor {
     ) -> ExecResult<Table> {
         let span = expr.span.clone();
         match &expr.expr {
-            // List.Select / List.Transform inside `in` — dispatch via FunctionCall.
+            // List.Select / List.Transform / List.RemoveItems / List.Difference / List.Intersect inside `in` — dispatch via FunctionCall.
             Expr::FunctionCall { name, args }
-                if (name == "List.Select" || name == "List.Transform") && args.len() == 2 =>
+                if (name == "List.Select" || name == "List.Transform" || name == "List.RemoveItems" || name == "List.Difference" || name == "List.Intersect") && args.len() >= 1 =>
             {
-                let call_args = vec![
-                    CallArg::Expr(args[0].clone()),
-                    CallArg::Expr(args[1].clone()),
-                ];
+                let call_args: Vec<CallArg> = args.iter()
+                    .map(|a| CallArg::Expr(a.clone()))
+                    .collect();
                 let synthetic = StepKind::FunctionCall { name: name.clone(), args: call_args };
                 Self::run_step(&synthetic, env, source)
             }
@@ -1269,6 +1268,156 @@ impl Executor {
                 } else { Ok(source.clone()) }
             }
 
+            // ── List.Intersect ────────────────────────────────────────────
+            // N-ary multiset intersection of a list-of-lists.
+            // Result multiplicity = MIN multiplicity across all inner lists.
+            // Order follows the first inner list.
+            // NOTE: equationCriteria (arg 2) is currently ignored at runtime.
+            "List.Intersect" => {
+                use std::collections::HashMap;
+                // Evaluate arg 0 to a flat Vec<Value>; each element should itself
+                // be a Value::List (the inner list).
+                let outer: Vec<Value> = match args.get(0) {
+                    Some(CallArg::Expr(e))       => Self::eval_to_list(e, env, source)?,
+                    Some(CallArg::StepRef(step)) => {
+                        let table = Self::lookup(step, env, source)?;
+                        table.columns.first()
+                            .map(|col| col.values.iter().map(|v| Value::Text(v.clone())).collect())
+                            .unwrap_or_default()
+                    }
+                    _ => vec![],
+                };
+                // Extract each inner Value into a Vec<String>.
+                let inner_lists: Vec<Vec<String>> = outer.iter().map(|v| {
+                    match v {
+                        Value::List(items) => items.iter().map(|x| x.to_raw_string()).collect(),
+                        other => vec![other.to_raw_string()],
+                    }
+                }).collect();
+
+                if inner_lists.is_empty() {
+                    return Ok(Table {
+                        source:  source.source.clone(),
+                        sheet:   source.sheet.clone(),
+                        columns: vec![Column { name: "Value".into(), col_type: infer_type(&[]), values: vec![] }],
+                    });
+                }
+
+                // Build multiplicity maps and compute MIN across all lists.
+                let count_map = |list: &[String]| -> HashMap<String, usize> {
+                    let mut m: HashMap<String, usize> = HashMap::new();
+                    for v in list { *m.entry(v.clone()).or_insert(0) += 1; }
+                    m
+                };
+                let mut mins = count_map(&inner_lists[0]);
+                for l in &inner_lists[1..] {
+                    let c = count_map(l);
+                    mins.retain(|k, v| {
+                        let other = *c.get(k).unwrap_or(&0);
+                        *v = (*v).min(other);
+                        *v > 0
+                    });
+                }
+                // Emit elements in first-list order, consuming the MIN budget.
+                let mut values: Vec<String> = Vec::new();
+                for v in &inner_lists[0] {
+                    if let Some(n) = mins.get_mut(v) {
+                        if *n > 0 { values.push(v.clone()); *n -= 1; }
+                    }
+                }
+                let col_type = infer_type(&values);
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values }],
+                })
+            }
+
+            // ── List.Difference ───────────────────────────────────────────
+            // Multiset (bag) difference: each occurrence in list2 removes
+            // ONE matching occurrence from list1. Order of list1 is preserved.
+            // NOTE: equationCriteria (arg 3) is currently ignored at runtime —
+            // only default equality is supported.
+            "List.Difference" => {
+                let list1: Vec<Value> = match args.get(0) {
+                    Some(CallArg::Expr(e))       => Self::eval_to_list(e, env, source)?,
+                    Some(CallArg::StepRef(step)) => {
+                        let table = Self::lookup(step, env, source)?;
+                        table.columns.first()
+                            .map(|col| col.values.iter().map(|v| Value::Text(v.clone())).collect())
+                            .unwrap_or_default()
+                    }
+                    _ => vec![],
+                };
+                let list2: Vec<Value> = match args.get(1) {
+                    Some(CallArg::Expr(e))       => Self::eval_to_list(e, env, source)?,
+                    Some(CallArg::StepRef(step)) => {
+                        let table = Self::lookup(step, env, source)?;
+                        table.columns.first()
+                            .map(|col| col.values.iter().map(|v| Value::Text(v.clone())).collect())
+                            .unwrap_or_default()
+                    }
+                    _ => vec![],
+                };
+                // Build a multiset count of list2 values.
+                use std::collections::HashMap;
+                let mut counts: HashMap<String, usize> = HashMap::new();
+                for v in &list2 {
+                    *counts.entry(v.to_raw_string()).or_insert(0) += 1;
+                }
+                // Walk list1 in order; keep an item only if its bucket is exhausted.
+                let mut values: Vec<String> = Vec::with_capacity(list1.len());
+                for v in &list1 {
+                    let key = v.to_raw_string();
+                    match counts.get_mut(&key) {
+                        Some(n) if *n > 0 => { *n -= 1; } // consume one occurrence, drop item
+                        _ => values.push(key),
+                    }
+                }
+                let col_type = infer_type(&values);
+                Ok(Table {
+                    source: source.source.clone(),
+                    sheet:  source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values }],
+                })
+            }
+
+            // ── List.RemoveItems ──────────────────────────────────────────
+            "List.RemoveItems" => {
+                let list1: Vec<Value> = match args.get(0) {
+                    Some(CallArg::Expr(e))       => Self::eval_to_list(e, env, source)?,
+                    Some(CallArg::StepRef(step)) => {
+                        let table = Self::lookup(step, env, source)?;
+                        table.columns.first()
+                            .map(|col| col.values.iter().map(|v| Value::Text(v.clone())).collect())
+                            .unwrap_or_default()
+                    }
+                    _ => vec![],
+                };
+                let list2: Vec<Value> = match args.get(1) {
+                    Some(CallArg::Expr(e))       => Self::eval_to_list(e, env, source)?,
+                    Some(CallArg::StepRef(step)) => {
+                        let table = Self::lookup(step, env, source)?;
+                        table.columns.first()
+                            .map(|col| col.values.iter().map(|v| Value::Text(v.clone())).collect())
+                            .unwrap_or_default()
+                    }
+                    _ => vec![],
+                };
+                let removal: std::collections::HashSet<String> =
+                    list2.iter().map(|v| v.to_raw_string()).collect();
+                let values: Vec<String> = list1.iter()
+                    .map(|v| v.to_raw_string())
+                    .filter(|s| !removal.contains(s))
+                    .collect();
+                let col_type = infer_type(&values);
+                Ok(Table {
+                    source: source.source.clone(),
+                    sheet:  source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values }],
+                })
+            }
+
             // ── Fallback ──────────────────────────────────────────────────
             _ => {
                 if !input_name.is_empty() {
@@ -1503,6 +1652,22 @@ impl Executor {
                 let text   = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
                 let suffix = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
                 Ok(Value::Bool(text.ends_with(&suffix)))
+            },
+            "Text.Start" => {
+                let mut it = args.into_iter();
+                let text  = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
+                let count = match it.next() { Some(Value::Int(n)) => n as usize, Some(Value::Float(f)) => f as usize, _ => 0 };
+                let chars: Vec<char> = text.chars().collect();
+                let end = count.min(chars.len());
+                Ok(Value::Text(chars[..end].iter().collect()))
+            },
+            "Text.End" => {
+                let mut it = args.into_iter();
+                let text  = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
+                let count = match it.next() { Some(Value::Int(n)) => n as usize, Some(Value::Float(f)) => f as usize, _ => 0 };
+                let chars: Vec<char> = text.chars().collect();
+                let start = chars.len().saturating_sub(count);
+                Ok(Value::Text(chars[start..].iter().collect()))
             },
             "Text.Range" => {
                 let mut it = args.into_iter();

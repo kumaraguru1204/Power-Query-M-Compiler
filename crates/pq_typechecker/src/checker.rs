@@ -312,17 +312,9 @@ impl<'a> TypeChecker<'a> {
                 match unified {
                     Some(t) => Some(ColumnType::List(Box::new(t))),
                     None => {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "E410",
-                                "list elements have incompatible types",
-                            )
-                            .with_label(
-                                node.span.clone(),
-                                "all elements must have a compatible type",
-                            ),
-                        );
-                        None
+                        // Heterogeneous list (e.g. {1, "A", null}): M allows
+                        // mixed-type lists — widen to Text rather than rejecting.
+                        Some(ColumnType::List(Box::new(ColumnType::Text)))
                     }
                 }
             }
@@ -735,7 +727,7 @@ impl<'a> TypeChecker<'a> {
                     "Table.RowCount" | "Table.ColumnCount" | "Table.IsEmpty" | "Table.IsDistinct"
                     | "Table.HasColumns" | "Table.MatchesAllRows" | "Table.MatchesAnyRows"
                     | "Table.ColumnNames" | "Table.ColumnsOfType"
-                    | "List.Generate" | "List.Select"
+                    | "List.Generate" | "List.Select" | "List.RemoveItems" | "List.Difference" | "List.Intersect"
                     => Some(vec![("Value".to_string(), ColumnType::Text)]),
 
                     "List.Transform" => {

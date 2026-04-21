@@ -19,9 +19,12 @@ fn main() {
     // ── Your M formula (edit this) ────────────────────────────────────────
     let formula = r#"
         let
-            Result = List.Select({}, each true)
-        in
-            Result
+    Result = List.RemoveItems(
+    {"A", 1, null, "B"},
+    {1, null}
+)
+in
+    Result
 
     "#;
 

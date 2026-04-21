@@ -306,7 +306,7 @@ impl<'a> Resolver<'a> {
                     "Table.RowCount" | "Table.ColumnCount" | "Table.IsEmpty" | "Table.IsDistinct"
                     | "Table.HasColumns" | "Table.ColumnNames" | "Table.ColumnsOfType"
                     | "Table.MatchesAllRows" | "Table.MatchesAnyRows"
-                    | "List.Generate" | "List.Select" | "List.Transform" => {
+                    | "List.Generate" | "List.Select" | "List.Transform" | "List.RemoveItems" | "List.Difference" | "List.Intersect" => {
                         Some(vec!["Value".to_string()])
                     }
                     "Table.Schema" => {
@@ -476,8 +476,13 @@ impl<'a> Resolver<'a> {
             );
             scope.define(binding.name.clone(), binding.step.span.clone());
         }
-        // Validate the output step is in scope
-        if !program.output.is_empty() && !scope.contains(&program.output) {
+        // Validate the output step is in scope.
+        // When the `in` clause is a full expression (output_expr is Some),
+        // there is no single step name to validate — resolve the expression
+        // instead so that any identifier references inside it are checked.
+        if let Some(expr) = &program.output_expr {
+            self.resolve_expr(expr, None);
+        } else if !program.output.is_empty() && !scope.contains(&program.output) {
             let dummy_span = pq_diagnostics::Span::dummy();
             self.unknown_step(&program.output, dummy_span, &scope, "output");
         }
