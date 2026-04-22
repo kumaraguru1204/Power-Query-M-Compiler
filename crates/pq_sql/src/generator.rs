@@ -266,8 +266,19 @@ impl Generator {
 
                     // â”€â”€ FirstN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     "Table.FirstN" => {
-                        let n = args.get(1).and_then(|a| a.as_int()).unwrap_or(0);
-                        (format!("    SELECT * FROM {} LIMIT {}", input, n), schema.to_vec())
+                        if let Some(n) = args.get(1).and_then(|a| a.as_int()) {
+                            // Integer count → simple LIMIT.
+                            (format!("    SELECT * FROM {} LIMIT {}", input, n), schema.to_vec())
+                        } else if let Some(pred) = args.get(1).and_then(|a| a.as_expr()) {
+                            // Take-while predicate → window-based cutoff.
+                            let pred_sql = emit_expr(pred);
+                            let body = format!(
+                                "    WITH _t AS (SELECT *, ROW_NUMBER() OVER () AS _rn FROM {input}),\n         _stop AS (SELECT MIN(_rn) AS _first_fail FROM _t WHERE NOT ({pred_sql}))\n    SELECT * FROM _t WHERE _rn < COALESCE((SELECT _first_fail FROM _stop), _rn + 1)",
+                                input = input, pred_sql = pred_sql);
+                            (body, schema.to_vec())
+                        } else {
+                            (format!("    SELECT * FROM {} LIMIT 0", input), schema.to_vec())
+                        }
                     }
 
                     // â”€â”€ LastN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1067,7 +1078,18 @@ fn emit_expr(node: &ExprNode) -> String {
                 "Text.From"      => format!("CAST({} AS TEXT)", args_sql),
                 "Text.Contains"  => {
                     let parts: Vec<String> = args.iter().map(emit_expr).collect();
-                    if parts.len() >= 2 {
+                    if parts.len() >= 3 {
+                        let case_insensitive = matches!(
+                            &args[2],
+                            pq_ast::expr::ExprNode { expr: pq_ast::expr::Expr::Identifier(n), .. }
+                                if n == "Comparer.OrdinalIgnoreCase"
+                        );
+                        if case_insensitive {
+                            format!("(POSITION(LOWER({1}) IN LOWER({0})) > 0)", parts[0], parts[1])
+                        } else {
+                            format!("(POSITION({1} IN {0}) > 0)", parts[0], parts[1])
+                        }
+                    } else if parts.len() == 2 {
                         format!("(POSITION({1} IN {0}) > 0)", parts[0], parts[1])
                     } else {
                         format!("Text_Contains({})", args_sql)
@@ -1075,7 +1097,19 @@ fn emit_expr(node: &ExprNode) -> String {
                 },
                 "Text.StartsWith" => {
                     let parts: Vec<String> = args.iter().map(emit_expr).collect();
-                    if parts.len() >= 2 {
+                    if parts.len() >= 3 {
+                        // Check if the 3rd arg names Comparer.OrdinalIgnoreCase.
+                        let case_insensitive = matches!(
+                            &args[2],
+                            pq_ast::expr::ExprNode { expr: pq_ast::expr::Expr::Identifier(n), .. }
+                                if n == "Comparer.OrdinalIgnoreCase"
+                        );
+                        if case_insensitive {
+                            format!("(LOWER({}) LIKE LOWER({}) || '%')", parts[0], parts[1])
+                        } else {
+                            format!("({} LIKE {} || '%')", parts[0], parts[1])
+                        }
+                    } else if parts.len() == 2 {
                         format!("({} LIKE {} || '%')", parts[0], parts[1])
                     } else {
                         format!("Text_StartsWith({})", args_sql)
@@ -1083,7 +1117,18 @@ fn emit_expr(node: &ExprNode) -> String {
                 },
                 "Text.EndsWith" => {
                     let parts: Vec<String> = args.iter().map(emit_expr).collect();
-                    if parts.len() >= 2 {
+                    if parts.len() >= 3 {
+                        let case_insensitive = matches!(
+                            &args[2],
+                            pq_ast::expr::ExprNode { expr: pq_ast::expr::Expr::Identifier(n), .. }
+                                if n == "Comparer.OrdinalIgnoreCase"
+                        );
+                        if case_insensitive {
+                            format!("(LOWER({}) LIKE '%' || LOWER({}))", parts[0], parts[1])
+                        } else {
+                            format!("({} LIKE '%' || {})", parts[0], parts[1])
+                        }
+                    } else if parts.len() == 2 {
                         format!("({} LIKE '%' || {})", parts[0], parts[1])
                     } else {
                         format!("Text_EndsWith({})", args_sql)

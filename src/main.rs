@@ -19,12 +19,10 @@ fn main() {
     // ── Your M formula (edit this) ────────────────────────────────────────
     let formula = r#"
         let
-    Result = List.RemoveItems(
-    {"A", 1, null, "B"},
-    {1, null}
-)
-in
-    Result
+            Source =  Excel.Workbook(File.Contents("workbook.xlsx")),
+            Empty = Table.SelectRows(Source, each false)
+        in
+            Table.FirstN(Empty, 1)
 
     "#;
 

@@ -506,9 +506,9 @@ These appear inside `each` lambdas / `AddColumn` expressions as `Expr::FunctionC
 | `Text.TrimEnd` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `Text.PadStart` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `Text.PadEnd` | ✅ | ✅ | 🔲 | ⚠️ Stub |
-| `Text.Contains` | ✅ | ✅ | 🔲 | ⚠️ Stub |
-| `Text.StartsWith` | ✅ | ✅ | 🔲 | ⚠️ Stub |
-| `Text.EndsWith` | ✅ | ✅ | 🔲 | ⚠️ Stub |
+| `Text.Contains` | ✅ | ✅ | ✅ | ✅ Full — nullable text → null, `Comparer.OrdinalIgnoreCase` supported; other comparers fall back to ordinal |
+| `Text.StartsWith` | ✅ | ✅ | ✅ | ✅ Full — nullable text → null, `Comparer.OrdinalIgnoreCase` supported; other comparers fall back to ordinal |
+| `Text.EndsWith` | ✅ | ✅ | ✅ | ✅ Full — nullable text → null, `Comparer.OrdinalIgnoreCase` supported; other comparers fall back to ordinal |
 | `Text.Range` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `Text.Replace` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `Text.Split` | ✅ | ✅ | 🔲 | ⚠️ Stub |
@@ -543,7 +543,7 @@ These appear inside `each` lambdas / `AddColumn` expressions as `Expr::FunctionC
 
 | Function | Grammar | Type-Check | Executor | Status |
 |:---------|:-------:|:----------:|:--------:|:------:|
-| `List.Transform` *(step)* | ✅ | ✅ | ✅ | ✅ Full |
+| `List.Transform` *(step)* | ✅ | ✅ | ✅ | ✅ Full — `each`, bare fn ref (`Number.From`), explicit lambda (`(x) => …`), record-list input (`each [Field]`), nested-list input (`each List.Sum(_)`) |
 | `List.Select` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Difference` | ✅ | ✅ | ✅ | ✅ Full (equationCriteria ignored at runtime — default equality only; SQL uses set semantics) |
 | `List.Intersect` | ✅ | ✅ | ✅ | ✅ Full (equationCriteria ignored at runtime; SQL INTERSECT used for literal lists, runtime handles general case) |
@@ -555,7 +555,7 @@ These appear inside `each` lambdas / `AddColumn` expressions as `Expr::FunctionC
 | `List.First` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Last` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Single` | ✅ | ✅ | 🔲 | ⚠️ Stub |
-| `List.Contains` | ✅ | ✅ | 🔲 | ⚠️ Stub |
+| `List.Contains` | ✅ | ✅ | ✅ | ✅ Full (equationCriteria falls back to default equality) |
 | `List.Distinct` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Reverse` | ✅ | ✅ | 🔲 | ⚠️ Stub |
 | `List.Sort` | ✅ | ✅ | 🔲 | ⚠️ Stub |

@@ -306,7 +306,7 @@ impl<'a> Resolver<'a> {
                     "Table.RowCount" | "Table.ColumnCount" | "Table.IsEmpty" | "Table.IsDistinct"
                     | "Table.HasColumns" | "Table.ColumnNames" | "Table.ColumnsOfType"
                     | "Table.MatchesAllRows" | "Table.MatchesAnyRows"
-                    | "List.Generate" | "List.Select" | "List.Transform" | "List.RemoveItems" | "List.Difference" | "List.Intersect" => {
+                    | "List.Generate" | "List.Select" | "List.Transform" | "List.RemoveItems" | "List.Difference" | "List.Intersect" | "List.Contains" => {
                         Some(vec!["Value".to_string()])
                     }
                     "Table.Schema" => {

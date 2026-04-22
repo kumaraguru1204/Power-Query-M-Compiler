@@ -1548,6 +1548,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parse_list_transform_function_ref() {
+        let p = parse(r#"let X = List.Transform({1, 2, 3}, Number.From) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind,
+            StepKind::FunctionCall { name, .. } if name == "List.Transform"));
+    }
+
+    #[test]
+    fn parse_list_transform_explicit_lambda() {
+        let p = parse(r#"let X = List.Transform({1, 2}, (x) => x * 2) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind,
+            StepKind::FunctionCall { name, .. } if name == "List.Transform"));
+    }
+
+    #[test]
+    fn parse_list_transform_records_field_access() {
+        let p = parse(r#"let X = List.Transform({[A=1],[A=2]}, each [A]) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind,
+            StepKind::FunctionCall { name, .. } if name == "List.Transform"));
+    }
+
+    #[test]
+    fn parse_list_transform_nested_lists() {
+        let p = parse(r#"let X = List.Transform({{1,2},{3,4}}, each List.Sum(_)) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind,
+            StepKind::FunctionCall { name, .. } if name == "List.Transform"));
+    }
+
     /// List.Sum with an inline integer list.
     #[test]
     fn test_list_sum_raw_list() {
@@ -1870,5 +1902,137 @@ mod tests {
     fn test_list_intersect_nested_call() {
         let p = parse(r#"let X = List.Intersect(List.Distinct({1, 2, 2, 3})) in X"#);
         assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Intersect"));
+    }
+
+    // ── List.Contains ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_list_contains_inline() {
+        let p = parse(r#"let X = List.Contains({1, 2, 3, 4, 5}, 3) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Contains"));
+    }
+
+    #[test]
+    fn parse_list_contains_step_ref() {
+        let p = parse(r#"
+            let
+                Src = {1, 2, 3, 4, 5},
+                X   = List.Contains(Src, 3)
+            in X
+        "#);
+        assert_eq!(p.steps.len(), 2);
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Contains"));
+    }
+
+    #[test]
+    fn parse_list_contains_with_each_criteria() {
+        let p = parse(r#"let X = List.Contains({"a","B"}, "A", each Text.Lower(_)) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "List.Contains" && args.len() == 3));
+    }
+
+    #[test]
+    fn parse_list_contains_with_comparer_fn() {
+        let p = parse(r#"let X = List.Contains({"Pears","Rhubarb"}, "rhubarb", Comparer.OrdinalIgnoreCase) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Contains"));
+    }
+
+    #[test]
+    fn parse_list_contains_nested_call() {
+        let p = parse(r#"let X = List.Contains(List.Range({1,2,3,4,5}, 0, 3), 2) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "List.Contains"));
+    }
+
+    // ── Text.StartsWith ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_text_startswith_two_args() {
+        let p = parse(r#"let X = Text.StartsWith("Hello, World", "Hello") in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.StartsWith"));
+    }
+
+    #[test]
+    fn parse_text_startswith_three_args() {
+        let p = parse(r#"let X = Text.StartsWith("Hello", "hello", Comparer.OrdinalIgnoreCase) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "Text.StartsWith" && args.len() == 3));
+    }
+
+    #[test]
+    fn parse_text_startswith_identifier_substring() {
+        let p = parse(r#"let prefix = "Mr", X = Text.StartsWith("Mr Smith", prefix) in X"#);
+        assert_eq!(p.steps.len(), 2);
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.StartsWith"));
+    }
+
+    #[test]
+    fn parse_text_startswith_nested_substring() {
+        let p = parse(r#"let n = 1, X = Text.StartsWith("abc", Text.From(n)) in X"#);
+        assert_eq!(p.steps.len(), 2);
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.StartsWith"));
+    }
+
+    // ── Text.EndsWith ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_text_endswith_two_args() {
+        let p = parse(r#"let X = Text.EndsWith("Hello, World", "World") in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.EndsWith"));
+    }
+
+    #[test]
+    fn parse_text_endswith_three_args() {
+        let p = parse(r#"let X = Text.EndsWith("Hello", "WORLD", Comparer.OrdinalIgnoreCase) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "Text.EndsWith" && args.len() == 3));
+    }
+
+    #[test]
+    fn parse_text_endswith_nested_substring() {
+        let p = parse(r#"let s = "abc.csv", ext = ".csv", X = Text.EndsWith(s, ext) in X"#);
+        assert_eq!(p.steps.len(), 3);
+        assert!(matches!(&p.steps[2].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.EndsWith"));
+    }
+
+    #[test]
+    fn parse_text_endswith_function_call_substring() {
+        let p = parse(r#"let X = Text.EndsWith("hello1", Text.From(1)) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.EndsWith"));
+    }
+
+    // ── Text.Contains ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_text_contains_two_args() {
+        let p = parse(r#"let X = Text.Contains("Hello, World", "World") in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.Contains"));
+    }
+
+    #[test]
+    fn parse_text_contains_three_args() {
+        let p = parse(r#"let X = Text.Contains("Hello", "hello", Comparer.OrdinalIgnoreCase) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, args, .. } if name == "Text.Contains" && args.len() == 3));
+    }
+
+    #[test]
+    fn parse_text_contains_identifier_substring() {
+        let p = parse(r#"let needle = "lo", X = Text.Contains("Hello", needle) in X"#);
+        assert_eq!(p.steps.len(), 2);
+        assert!(matches!(&p.steps[1].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.Contains"));
+    }
+
+    #[test]
+    fn parse_text_contains_nested_substring() {
+        let p = parse(r#"let X = Text.Contains("Apple", Text.End("ABCDE", 1)) in X"#);
+        assert_eq!(p.steps.len(), 1);
+        assert!(matches!(&p.steps[0].step.kind, StepKind::FunctionCall { name, .. } if name == "Text.Contains"));
     }
 }

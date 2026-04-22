@@ -97,9 +97,9 @@ impl Executor {
     ) -> ExecResult<Table> {
         let span = expr.span.clone();
         match &expr.expr {
-            // List.Select / List.Transform / List.RemoveItems / List.Difference / List.Intersect inside `in` — dispatch via FunctionCall.
+            // List.Select / List.Transform / List.RemoveItems / List.Difference / List.Intersect / List.Contains inside `in` — dispatch via FunctionCall.
             Expr::FunctionCall { name, args }
-                if (name == "List.Select" || name == "List.Transform" || name == "List.RemoveItems" || name == "List.Difference" || name == "List.Intersect") && args.len() >= 1 =>
+                if (name == "List.Select" || name == "List.Transform" || name == "List.RemoveItems" || name == "List.Difference" || name == "List.Intersect" || name == "List.Contains") && args.len() >= 1 =>
             {
                 let call_args: Vec<CallArg> = args.iter()
                     .map(|a| CallArg::Expr(a.clone()))
@@ -406,9 +406,40 @@ impl Executor {
             // ── FirstN ────────────────────────────────────────────────────
             "Table.FirstN" => {
                 let t  = Self::lookup(input_name, env, source)?;
-                let n  = args.get(1).and_then(|a| a.as_int()).unwrap_or(1) as usize;
                 let rc = t.row_count();
-                Ok(Self::select_rows(t, &(0..n.min(rc)).collect::<Vec<_>>()))
+                let arg2 = args.get(1);
+
+                // Branch 1: integer literal or numeric expression → take that many rows.
+                let count_opt: Option<usize> = arg2.and_then(|a| a.as_int()).map(|n| n as usize)
+                    .or_else(|| {
+                        arg2.and_then(|a| a.as_expr()).and_then(|e| {
+                            match Self::eval_expr(e, t, 0).ok()? {
+                                Value::Int(n)   => Some(n.max(0) as usize),
+                                Value::Float(f) => Some(f.max(0.0) as usize),
+                                _ => None,
+                            }
+                        })
+                    });
+
+                if let Some(n) = count_opt {
+                    return Ok(Self::select_rows(t, &(0..n.min(rc)).collect::<Vec<_>>()));
+                }
+
+                // Branch 2: predicate (each / lambda / function ref) → take-while.
+                // STOP at the first row that fails — do NOT filter like Table.SelectRows.
+                if let Some(pred_expr) = arg2.and_then(|a| a.as_expr()) {
+                    let mut keep: Vec<usize> = Vec::new();
+                    for i in 0..rc {
+                        if !matches!(Self::eval_expr(pred_expr, t, i), Ok(Value::Bool(true))) {
+                            break;
+                        }
+                        keep.push(i);
+                    }
+                    return Ok(Self::select_rows(t, &keep));
+                }
+
+                // Fallback: nothing usable → empty table.
+                Ok(Self::select_rows(t, &[]))
             }
 
             // ── LastN ─────────────────────────────────────────────────────
@@ -1244,6 +1275,134 @@ impl Executor {
                 } else { Ok(source.clone()) }
             }
 
+            // ── Text.StartsWith (step context) ────────────────────────────
+            // Handles nullable text and comparer arg at the AST level so that
+            // `Comparer.OrdinalIgnoreCase` is not lost during expr evaluation.
+            "Text.Contains" => {
+                let text_v: Value = match args.get(0) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                };
+                let sub_v: Value = match args.get(1) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    Some(CallArg::Str(s))  => Value::Text(s.clone()),
+                    _ => Value::Null,
+                };
+                let comparer: Option<Value> = match args.get(2) {
+                    Some(CallArg::Expr(e)) => Some(match &e.expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    }),
+                    _ => None,
+                };
+                let result = Self::call_function(
+                    "Text.Contains",
+                    match comparer {
+                        Some(c) => vec![text_v, sub_v, c],
+                        None    => vec![text_v, sub_v],
+                    },
+                )?;
+                let val_str = match &result {
+                    Value::Null => "".to_string(),
+                    other => other.to_raw_string(),
+                };
+                let col_type = if matches!(result, Value::Null) {
+                    ColumnType::Boolean
+                } else {
+                    infer_type(&[val_str.clone()])
+                };
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values: vec![val_str] }],
+                })
+            }
+
+            // ── Text.StartsWith (step context) ────────────────────────────
+            // Handles nullable text and comparer arg at the AST level so that
+            // `Comparer.OrdinalIgnoreCase` is not lost during expr evaluation.
+            "Text.StartsWith" => {
+                let text_v: Value = match args.get(0) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                };
+                let prefix_v: Value = match args.get(1) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    Some(CallArg::Str(s))  => Value::Text(s.clone()),
+                    _ => Value::Null,
+                };
+                // Inspect arg 2 at AST level: preserve comparer name as sentinel.
+                let comparer: Option<Value> = match args.get(2) {
+                    Some(CallArg::Expr(e)) => Some(match &e.expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    }),
+                    _ => None,
+                };
+                let result = Self::call_function(
+                    "Text.StartsWith",
+                    match comparer {
+                        Some(c) => vec![text_v, prefix_v, c],
+                        None    => vec![text_v, prefix_v],
+                    },
+                )?;
+                let val_str = match &result {
+                    Value::Null => "".to_string(),
+                    other => other.to_raw_string(),
+                };
+                let col_type = if matches!(result, Value::Null) {
+                    ColumnType::Boolean
+                } else {
+                    infer_type(&[val_str.clone()])
+                };
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values: vec![val_str] }],
+                })
+            }
+
+            // ── Text.EndsWith (step context) ─────────────────────────────
+            "Text.EndsWith" => {
+                let text_v: Value = match args.get(0) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                };
+                let suffix_v: Value = match args.get(1) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    Some(CallArg::Str(s))  => Value::Text(s.clone()),
+                    _ => Value::Null,
+                };
+                let comparer: Option<Value> = match args.get(2) {
+                    Some(CallArg::Expr(e)) => Some(match &e.expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    }),
+                    _ => None,
+                };
+                let result = Self::call_function(
+                    "Text.EndsWith",
+                    match comparer {
+                        Some(c) => vec![text_v, suffix_v, c],
+                        None    => vec![text_v, suffix_v],
+                    },
+                )?;
+                let val_str = match &result {
+                    Value::Null => "".to_string(),
+                    other => other.to_raw_string(),
+                };
+                let col_type = if matches!(result, Value::Null) {
+                    ColumnType::Boolean
+                } else {
+                    infer_type(&[val_str.clone()])
+                };
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type, values: vec![val_str] }],
+                })
+            }
+
             // ── List.Transform ────────────────────────────────────────────
             "List.Transform" => {
                 let transform = args.get(1).and_then(|a| a.as_expr());
@@ -1266,6 +1425,39 @@ impl Executor {
                     Ok(Table { source: source.source.clone(), sheet: source.sheet.clone(),
                         columns: vec![Column { name: "Value".into(), col_type, values }] })
                 } else { Ok(source.clone()) }
+            }
+
+            // ── List.Contains ───────────────────────────────────────────────
+            // Returns a single-row Boolean "Value" table.
+            // Arg 0: list (expr or step-ref); Arg 1: scalar needle.
+            // equationCriteria (arg 2) is parsed but ignored at runtime.
+            "List.Contains" => {
+                let list_val: Value = match args.get(0) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    Some(CallArg::StepRef(step)) => {
+                        let t = Self::lookup(step, env, source)?;
+                        let items: Vec<Value> = t.columns.first()
+                            .map(|c| c.values.iter().map(|s| Value::Text(s.clone())).collect())
+                            .unwrap_or_default();
+                        Value::List(items)
+                    }
+                    _ => Value::Null,
+                };
+                let needle: Value = match args.get(1) {
+                    Some(CallArg::Expr(e)) => Self::eval_expr(e, source, 0).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                };
+                let items: Vec<Value> = match list_val {
+                    Value::List(xs) => xs,
+                    other => vec![other],
+                };
+                let needle_str = needle.to_raw_string();
+                let found = items.iter().any(|x| x.to_raw_string() == needle_str);
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type: ColumnType::Boolean, values: vec![found.to_string()] }],
+                })
             }
 
             // ── List.Intersect ────────────────────────────────────────────
@@ -1458,9 +1650,13 @@ impl Executor {
                 Ok(Self::coerce(raw, col_type))
             }
             Expr::ColumnAccess(name) => {
-                if name == "_" {
-                    if let Some(v) = current_underscore() {
+                if let Some(v) = current_underscore() {
+                    if name == "_" {
                         return Ok(v);
+                    }
+                    // `[Field]` inside `each` where `_` is a record — implicit _[Field]
+                    if let Value::Record(ref map) = v {
+                        return Ok(map.get(name).cloned().unwrap_or(Value::Null));
                     }
                 }
                 let raw      = Self::cell(table, name, row);
@@ -1537,6 +1733,36 @@ impl Executor {
 
             // ── function calls — best-effort evaluation ───────────────────
             Expr::FunctionCall { name, args } => {
+                // For Text.StartsWith, preserve the comparer arg as a sentinel
+                // string rather than evaluating it (an unknown identifier like
+                // `Comparer.OrdinalIgnoreCase` would evaluate to Value::Text("")).
+                if name == "Text.StartsWith" && args.len() >= 3 {
+                    let text_v   = Self::eval_expr(&args[0], table, row)?;
+                    let prefix_v = Self::eval_expr(&args[1], table, row)?;
+                    let comparer = match &args[2].expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(&args[2], table, row)?,
+                    };
+                    return Self::call_function(name, vec![text_v, prefix_v, comparer]);
+                }
+                if name == "Text.EndsWith" && args.len() >= 3 {
+                    let text_v   = Self::eval_expr(&args[0], table, row)?;
+                    let suffix_v = Self::eval_expr(&args[1], table, row)?;
+                    let comparer = match &args[2].expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(&args[2], table, row)?,
+                    };
+                    return Self::call_function(name, vec![text_v, suffix_v, comparer]);
+                }
+                if name == "Text.Contains" && args.len() >= 3 {
+                    let text_v = Self::eval_expr(&args[0], table, row)?;
+                    let sub_v  = Self::eval_expr(&args[1], table, row)?;
+                    let comparer = match &args[2].expr {
+                        Expr::Identifier(n) if n.contains('.') => Value::Text(n.clone()),
+                        _ => Self::eval_expr(&args[2], table, row)?,
+                    };
+                    return Self::call_function(name, vec![text_v, sub_v, comparer]);
+                }
                 let evaled: Vec<Value> = args.iter()
                     .map(|a| Self::eval_expr(a, table, row))
                     .collect::<Result<_, _>>()?;
@@ -1565,6 +1791,23 @@ impl Executor {
 
     /// Dispatch built-in M function calls that appear inside expressions.
     fn call_function(name: &str, args: Vec<Value>) -> ExecResult<Value> {
+        // When a list aggregation function is called in expression context with a
+        // single Value::List argument (e.g. `List.Sum(_)` where `_` = {1,2,3}),
+        // unpack the list so every aggregation function sees individual items.
+        let args = if matches!(
+            name,
+            "List.Sum" | "List.Average" | "List.Min" | "List.Max" | "List.Median"
+            | "List.StandardDeviation" | "List.Count" | "List.NonNullCount"
+            | "List.IsEmpty" | "List.Mode" | "List.Modes"
+            | "List.AllTrue" | "List.AnyTrue"
+        ) && args.len() == 1 {
+            match args.into_iter().next().unwrap() {
+                Value::List(xs) => xs,
+                other           => vec![other],
+            }
+        } else {
+            args
+        };
         match name {
             "Text.Upper" => match args.into_iter().next() {
                 Some(Value::Text(s)) => Ok(Value::Text(s.to_uppercase())),
@@ -1637,21 +1880,61 @@ impl Executor {
             },
             "Text.Contains" => {
                 let mut it = args.into_iter();
-                let text = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                let sub  = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                Ok(Value::Bool(text.contains(&sub)))
+                let text_v = it.next().unwrap_or(Value::Null);
+                let sub_v  = it.next().unwrap_or(Value::Null);
+                let comparer = it.next();
+                if matches!(text_v, Value::Null) { return Ok(Value::Null); }
+                let text = text_v.to_raw_string();
+                let sub  = sub_v.to_raw_string();
+                let case_insensitive = matches!(
+                    &comparer,
+                    Some(Value::Text(n)) if n == "Comparer.OrdinalIgnoreCase"
+                );
+                let result = if case_insensitive {
+                    text.to_lowercase().contains(&sub.to_lowercase())
+                } else {
+                    text.contains(&sub)
+                };
+                Ok(Value::Bool(result))
             },
             "Text.StartsWith" => {
                 let mut it = args.into_iter();
-                let text   = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                let prefix = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                Ok(Value::Bool(text.starts_with(&prefix)))
+                let text_v   = it.next().unwrap_or(Value::Null);
+                let prefix_v = it.next().unwrap_or(Value::Null);
+                let comparer = it.next();
+                // Nullable propagation: null text → null result (per M spec).
+                if matches!(text_v, Value::Null) { return Ok(Value::Null); }
+                let text   = text_v.to_raw_string();
+                let prefix = prefix_v.to_raw_string();
+                let case_insensitive = matches!(
+                    &comparer,
+                    Some(Value::Text(n)) if n == "Comparer.OrdinalIgnoreCase"
+                );
+                let result = if case_insensitive {
+                    text.to_lowercase().starts_with(&prefix.to_lowercase())
+                } else {
+                    text.starts_with(&prefix)
+                };
+                Ok(Value::Bool(result))
             },
             "Text.EndsWith" => {
                 let mut it = args.into_iter();
-                let text   = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                let suffix = it.next().map(|v| v.to_raw_string()).unwrap_or_default();
-                Ok(Value::Bool(text.ends_with(&suffix)))
+                let text_v   = it.next().unwrap_or(Value::Null);
+                let suffix_v = it.next().unwrap_or(Value::Null);
+                let comparer = it.next();
+                if matches!(text_v, Value::Null) { return Ok(Value::Null); }
+                let text   = text_v.to_raw_string();
+                let suffix = suffix_v.to_raw_string();
+                let case_insensitive = matches!(
+                    &comparer,
+                    Some(Value::Text(n)) if n == "Comparer.OrdinalIgnoreCase"
+                );
+                let result = if case_insensitive {
+                    text.to_lowercase().ends_with(&suffix.to_lowercase())
+                } else {
+                    text.ends_with(&suffix)
+                };
+                Ok(Value::Bool(result))
             },
             "Text.Start" => {
                 let mut it = args.into_iter();
@@ -1944,10 +2227,18 @@ impl Executor {
             },
             "List.Contains" => {
                 let mut it = args.into_iter();
-                let _list = it.next(); // first arg is the list
-                let value = it.next().unwrap_or(Value::Null);
-                // Simplified: check if value equals the list (not ideal without list type)
-                Ok(Value::Bool(_list == Some(value.clone()) || _list.as_ref().map(|v| v.to_raw_string().contains(&value.to_raw_string())).unwrap_or(false)))
+                let list_val = it.next().unwrap_or(Value::Null);
+                let needle   = it.next().unwrap_or(Value::Null);
+                // equationCriteria (arg 3) is currently ignored — falls back to
+                // default string-equality. TODO: wire comparer/key-extractor support.
+                let _criteria = it.next();
+                let items: Vec<Value> = match list_val {
+                    Value::List(xs) => xs,
+                    other => vec![other],
+                };
+                let needle_str = needle.to_raw_string();
+                let found = items.iter().any(|x| x.to_raw_string() == needle_str);
+                Ok(Value::Bool(found))
             },
             "List.First" => Ok(args.into_iter().next().unwrap_or(Value::Null)),
             "List.Last" => Ok(args.into_iter().last().unwrap_or(Value::Null)),
@@ -2225,6 +2516,37 @@ impl Executor {
         item:   &Value,
         source: &Table,
     ) -> ExecResult<Value> {
+        // Gap 1: bare function reference, e.g. `Number.From`, `Text.Upper`.
+        // The parser emits Expr::Identifier for a qualified name used as a value;
+        // call it directly with the current item as the sole argument.
+        if let Expr::Identifier(name) = &expr.expr {
+            if name.contains('.') {
+                return Self::call_function(name, vec![item.clone()]);
+            }
+        }
+        // Gap 2: explicit lambda with a named parameter other than `_`,
+        // e.g. `(x) => x * 2`.  Build a synthetic one-row table so the
+        // param name resolves to the current item via the normal column lookup.
+        if let Expr::Lambda { params, body } = &expr.expr {
+            if params.len() == 1 && params[0] != "_" {
+                let col_type = match item {
+                    Value::Int(_)   => ColumnType::Integer,
+                    Value::Float(_) => ColumnType::Float,
+                    Value::Bool(_)  => ColumnType::Boolean,
+                    _               => ColumnType::Text,
+                };
+                let synthetic = Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column {
+                        name:     params[0].clone(),
+                        col_type,
+                        values:   vec![item.to_raw_string()],
+                    }],
+                };
+                return Self::eval_expr(body, &synthetic, 0);
+            }
+        }
         push_underscore(item.clone());
         let result = Self::eval_expr(expr, source, 0);
         pop_underscore();

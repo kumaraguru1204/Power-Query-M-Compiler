@@ -301,7 +301,16 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     fndef!("Combine",   [ArgKind::StepRefList], sig(vec![list(Type::Table)], Type::Table), "Table.Combine({t1,t2,...})"),
     fndef!("FindText",  [ArgKind::StepRef, ArgKind::StringLit], sig(vec![Type::Table, Type::Text], Type::Table), "Table.FindText(prev, text)"),
     fndef!("First",     [ArgKind::StepRef, ArgKind::Value],    sig(vec![Type::Table, Type::Any], Type::Record),  "Table.First(prev, default)"),
-    fndef!("FirstN",    [ArgKind::StepRef, ArgKind::Integer],  sig(vec![Type::Table, Type::Number], Type::Table), "Table.FirstN(prev, n)"),
+    FunctionDef {
+        name:             "FirstN",
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::Value],
+        signatures:       vec![
+            sig(vec![Type::Table, Type::Number], Type::Table),
+            sig(vec![Type::Table, fun(vec![Type::Record], Type::Boolean)], Type::Table),
+        ],
+        schema_transform: Some(schema_passthrough),
+        doc:              "Table.FirstN(prev, countOrCondition) — count (number) or each predicate (take-while)",
+    },
     FunctionDef {
         name:      "FirstValue",
         arg_hints: vec![ArgKind::StepRef, ArgKind::Value],
@@ -1260,9 +1269,36 @@ fn text_functions() -> Vec<FunctionDef> { vec![
         sig(vec![Type::Text, Type::Number, Type::Text], Type::Text), "Text.PadStart(text,width,pad)"),
     fndef!("PadEnd",     [ArgKind::Value, ArgKind::Integer, ArgKind::StringLit],
         sig(vec![Type::Text, Type::Number, Type::Text], Type::Text), "Text.PadEnd(text,width,pad)"),
-    fndef!("Contains",   [ArgKind::Value, ArgKind::StringLit],  sig(vec![Type::Text, Type::Text], Type::Boolean), "Text.Contains(text,substring)"),
-    fndef!("StartsWith", [ArgKind::Value, ArgKind::StringLit],  sig(vec![Type::Text, Type::Text], Type::Boolean), "Text.StartsWith(text,prefix)"),
-    fndef!("EndsWith",   [ArgKind::Value, ArgKind::StringLit],  sig(vec![Type::Text, Type::Text], Type::Boolean), "Text.EndsWith(text,suffix)"),
+    FunctionDef {
+        name:             "Contains",
+        arg_hints:        vec![ArgKind::Value, ArgKind::Value, ArgKind::OptValue],
+        signatures:       vec![
+            sig(vec![nullable(Type::Text), Type::Text], nullable(Type::Boolean)),
+            sigp(vec![p(nullable(Type::Text)), p(Type::Text), opt(nullable(Type::Any))], nullable(Type::Boolean)),
+        ],
+        schema_transform: None,
+        doc:              "Text.Contains(text, substring, optional comparer)",
+    },
+    FunctionDef {
+        name:             "StartsWith",
+        arg_hints:        vec![ArgKind::Value, ArgKind::Value, ArgKind::OptValue],
+        signatures:       vec![
+            sig(vec![nullable(Type::Text), Type::Text], nullable(Type::Boolean)),
+            sigp(vec![p(nullable(Type::Text)), p(Type::Text), opt(nullable(Type::Any))], nullable(Type::Boolean)),
+        ],
+        schema_transform: None,
+        doc:              "Text.StartsWith(text, substring, optional comparer)",
+    },
+    FunctionDef {
+        name:             "EndsWith",
+        arg_hints:        vec![ArgKind::Value, ArgKind::Value, ArgKind::OptValue],
+        signatures:       vec![
+            sig(vec![nullable(Type::Text), Type::Text], nullable(Type::Boolean)),
+            sigp(vec![p(nullable(Type::Text)), p(Type::Text), opt(nullable(Type::Any))], nullable(Type::Boolean)),
+        ],
+        schema_transform: None,
+        doc:              "Text.EndsWith(text, substring, optional comparer)",
+    },
     fndef!("Start",      [ArgKind::Value, ArgKind::Integer],
         sig(vec![Type::Text, Type::Number], Type::Text), "Text.Start(text, count)"),
     fndef!("End",        [ArgKind::Value, ArgKind::Integer],

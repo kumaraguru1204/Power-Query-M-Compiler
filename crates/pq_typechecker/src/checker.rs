@@ -730,6 +730,10 @@ impl<'a> TypeChecker<'a> {
                     | "List.Generate" | "List.Select" | "List.RemoveItems" | "List.Difference" | "List.Intersect"
                     => Some(vec![("Value".to_string(), ColumnType::Text)]),
 
+                    // List.Contains returns a single Boolean value.
+                    "List.Contains"
+                    => Some(vec![("Value".to_string(), ColumnType::Boolean)]),
+
                     "List.Transform" => {
                         // Derive output element type from the transformer function's return type.
                         let fn_ty = args.get(1).and_then(|a| a.as_expr())
