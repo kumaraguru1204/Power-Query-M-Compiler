@@ -1,0 +1,26 @@
+{
+    "id":  "NUM-006",
+    "rule":  "R-NUM-09",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "X"
+                              ],
+                              [
+                                  "1"
+                              ],
+                              [
+                                  "hello"
+                              ]
+                          ],
+                 "source":  "n.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data]\r\nin\r\n    Sheet1",
+    "description":  "Mixed numeric/text falls through to Text",
+    "expect_ok":  {
+                      "types":  [
+                                    "Text"
+                                ]
+                  }
+}

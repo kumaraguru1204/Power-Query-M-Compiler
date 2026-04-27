@@ -1,0 +1,30 @@
+{
+    "id":  "F04-ListReverse-001",
+    "rule":  "R-LST-SET",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "N"
+                              ],
+                              [
+                                  "1"
+                              ],
+                              [
+                                  "2"
+                              ],
+                              [
+                                  "3"
+                              ],
+                              [
+                                  "4"
+                              ]
+                          ],
+                 "source":  "i.xlsx"
+             },
+    "formula":  "let Source = 0, R = List.Reverse({1, 2, 3}) in R",
+    "description":  "List.Reverse on inline list (passthrough of source table)",
+    "expect_ok":  {
+                      "row_count":  4
+                  }
+}

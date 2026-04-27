@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+﻿use std::collections::{HashMap, HashSet};
 use pq_ast::{
     Program,
     expr::{Expr, ExprNode},
@@ -19,6 +19,10 @@ pub struct Resolver<'a> {
     /// column references against the actual schema at that point in
     /// the pipeline — not just the raw source table.
     step_schemas: HashMap<String, Vec<String>>,
+    /// All step names that have been defined (including ValueBindings that
+    /// produce no column schema).  Used to distinguish bound variables from
+    /// column references inside expression arguments.
+    known_steps:  HashSet<String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -27,6 +31,7 @@ impl<'a> Resolver<'a> {
             table,
             diagnostics: vec![],
             step_schemas: HashMap::new(),
+            known_steps:  HashSet::new(),
         }
     }
 
@@ -97,7 +102,15 @@ impl<'a> Resolver<'a> {
             // Dotted names (e.g. "Order.Ascending") are never column names.
             Expr::Identifier(name) => {
                 if let Some(cols) = schema {
-                    if !name.contains('.') && !cols.iter().any(|c| c == name) && name != "_" {
+                    if !name.contains('.')
+                        && !cols.iter().any(|c| c == name)
+                        && name != "_"
+                        // A name that is a bound step (e.g. a function value like
+                        // `f = (x) => …`) is valid as a value argument even though
+                        // it is not a column.  Skip the column diagnostic when the
+                        // identifier matches a known step name.
+                        && !self.known_steps.contains(name.as_str())
+                    {
                         self.unknown_column(name, node.span.clone());
                     }
                 }
@@ -280,11 +293,27 @@ impl<'a> Resolver<'a> {
                         })
                     }
                     "Table.ExpandTableColumn" | "Table.ExpandRecordColumn" => {
-                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
-                        let columns  = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let col_name: String = match args.get(1) {
+                            Some(CallArg::Str(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::StringLit(s) => s.clone(),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        };
+                        let inner_cols = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let new_names_opt: Option<Vec<String>> = args.get(3).and_then(|a| a.as_expr()).and_then(|e| {
+                            if let Expr::List(items) = &e.expr {
+                                let names: Vec<String> = items.iter().filter_map(|it| {
+                                    if let Expr::StringLit(s) = &it.expr { Some(s.clone()) } else { None }
+                                }).collect();
+                                if names.len() == items.len() { Some(names) } else { None }
+                            } else { None }
+                        });
+                        let output_names: Vec<String> = new_names_opt.unwrap_or_else(|| inner_cols.iter().cloned().collect());
                         self.schema_of(input_name).map(|cols| {
-                            let mut out: Vec<String> = cols.into_iter().filter(|n| n != col_name).collect();
-                            out.extend(columns.iter().cloned()); out
+                            let mut out: Vec<String> = cols.into_iter().filter(|n| n != &col_name).collect();
+                            out.extend(output_names); out
                         })
                     }
                     "Table.Join" | "Table.FuzzyJoin" => {
@@ -328,6 +357,9 @@ impl<'a> Resolver<'a> {
         if let Some(cols) = output {
             self.step_schemas.insert(step_name.to_string(), cols);
         }
+        // Always record the step name so resolve_expr can distinguish bound
+        // variables from column references.
+        self.known_steps.insert(step_name.to_string());
     }
 
     // ── step validation helper ────────────────────────────────────────────────

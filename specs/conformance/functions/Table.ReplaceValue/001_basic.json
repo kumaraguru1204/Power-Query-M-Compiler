@@ -1,0 +1,27 @@
+{
+    "id":  "F09-ReplaceValue-001",
+    "rule":  "R-TBL-RV",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A"
+                              ],
+                              [
+                                  "1"
+                              ],
+                              [
+                                  "2"
+                              ],
+                              [
+                                  "1"
+                              ]
+                          ],
+                 "source":  "rv.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.ReplaceValue(Sheet1, 1, 99, Replacer_ReplaceValue, {\"A\"})\r\nin\r\n    Result",
+    "description":  "ReplaceValue with literal Replacer is currently rejected at parse time",
+    "expect_err":  {
+                       "category":  "Parse"
+                   }
+}

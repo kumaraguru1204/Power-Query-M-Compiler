@@ -312,7 +312,7 @@ These functions have first-class support across **every** pipeline stage: parser
 ├────────────────────────────────────┼───────────┼───────────┼──────────────────────────────────┤
 │ Table.TransformColumnTypes         │    ✅     │    ✅     │ CAST in SQL; schema updated      │
 ├────────────────────────────────────┼───────────┼───────────┼──────────────────────────────────┤
-│ Table.SelectRows                   │    ✅     │    ✅     │ each→lambda; SQL WHERE           │
+│ Table.SelectRows                   │    ✅     │    ✅     │ each→lambda; SQL WHERE; nested-call 1st arg (StepRefOrValue) │
 ├────────────────────────────────────┼───────────┼───────────┼──────────────────────────────────┤
 │ Table.AddColumn                    │    ✅     │    ✅     │ 2 overloads; schema grows        │
 ├────────────────────────────────────┼───────────┼───────────┼──────────────────────────────────┤
@@ -364,13 +364,13 @@ These are **syntactically complete** — the grammar has their `ArgKind` hints, 
 |:---------|:---------:|:---------:|
 | `Table.ApproximateRowCount` | ✅ | 🔲 |
 | `Table.ColumnCount` | ✅ | 🔲 |
-| `Table.ColumnNames` | ✅ | 🔲 |
+| `Table.ColumnNames` | ✅ | ✅ | nested-call 1st arg (StepRefOrValue) |
 | `Table.ColumnsOfType` | ✅ | 🔲 |
 | `Table.IsEmpty` | ✅ | 🔲 |
 | `Table.IsDistinct` | ✅ | 🔲 |
 | `Table.PartitionValues` | ✅ | 🔲 |
 | `Table.Profile` | ✅ | 🔲 |
-| `Table.RowCount` | ✅ | 🔲 |
+| `Table.RowCount` | ✅ | ✅ | nested-call 1st arg (StepRefOrValue) |
 | `Table.Schema` | ✅ | 🔲 |
 
 #### Table — Row Operations
@@ -431,7 +431,7 @@ These are **syntactically complete** — the grammar has their `ArgKind` hints, 
 | `Table.CombineColumnsToRecord` | ✅ | 🔲 |
 | `Table.ExpandListColumn` | ✅ | 🔲 |
 | `Table.ExpandRecordColumn` | ✅ | 🔲 |
-| `Table.ExpandTableColumn` | ✅ | 🔲 |
+| `Table.ExpandTableColumn` | ✅ | ✅ | nested-call 1st arg (StepRefOrValue), expr col name (Value), optional newColumnNames (OptValue) |
 | `Table.FillDown` | ✅ | 🔲 |
 | `Table.FillUp` | ✅ | 🔲 |
 | `Table.FuzzyGroup` | ✅ | 🔲 |
@@ -761,6 +761,48 @@ These appear inside `each` lambdas / `AddColumn` expressions as `Expr::FunctionC
   • Error recovery: on parse failure, skip to next ',' or 'in'
     to report multiple errors per compilation
   • Currently: bails on first error
+```
+
+### Known Limitations
+
+```
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  Inline `let...in` expression as a function call argument                │
+  │  ─────────────────────────────────────────────────────                   │
+  │  Shape: Table.SelectRows(let T = ... in T, each ...)                     │
+  │  Status: ❌ parse error — `let` is a top-level keyword only;             │
+  │          the Pratt-parser expression grammar does not handle it.          │
+  │  Workaround: hoist the inner `let...in` block into a named step           │
+  │    instead of inlining it as a call argument:                            │
+  │                                                                           │
+  │    let                                                                    │
+  │        T        = Table.SelectRows(Source, each _[Dept] = "IT"),          │
+  │        Filtered = Table.SelectRows(T, each _[Age] <> "28")               │
+  │    in                                                                     │
+  │        Filtered                                                           │
+  │                                                                           │
+  │  Fix: extend parse_primary() to recognise TokenKind::Let and             │
+  │       parse a nested Program, returning it as Expr::LetIn { steps, body }.│
+  │  Effort: ~40 lines in pq_parser/parser.rs + resolver/typechecker/         │
+  │          executor handling for the new AST variant.                       │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  Function-call result used as arithmetic operand in a binding            │
+  │  ───────────────────────────────────────────────────────────                │
+  │  Shape: n = Table.RowCount(Source) + 1                                   │
+  │  Status: ❌ parse error — `is_value_binding_start` returns false for      │
+  │          qualified function calls (it stops at the first `(` and         │
+  │          treats the whole expression as a step, so the `+ 1` that        │
+  │          follows causes an "expected ',' or 'in'" error.                 │
+  │  Workaround: bind the step result first, then compute arithmetically:    │
+  │    let rc = Table.RowCount(Source), n = rc + 1 in n                      │
+  │  Fix: in `parse_binding`, after parsing the function-call step, peek at  │
+  │       the next token — if it is an operator, re-parse the whole RHS as   │
+  │       a value expression (with the already-parsed call as a sub-expr).   │
+  │  Effort: ~20 lines in pq_parser/parser.rs.                               │
+  │  Tracked: tests/table_rowcount_tests.rs t07 (#[ignore]).                 │
+  └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

@@ -283,9 +283,20 @@ impl Generator {
 
                     // â”€â”€ LastN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     "Table.LastN" => {
-                        let n = args.get(1).and_then(|a| a.as_int()).unwrap_or(0);
-                        let body = format!("    SELECT * FROM (SELECT *, ROW_NUMBER() OVER() AS _rn FROM {0}) AS _t WHERE _rn > (SELECT COUNT(*) FROM {0}) - {1}", input, n);
-                        (body, schema.to_vec())
+                        if let Some(n) = args.get(1).and_then(|a| a.as_int()) {
+                            let body = format!("    SELECT * FROM (SELECT *, ROW_NUMBER() OVER() AS _rn FROM {0}) AS _t WHERE _rn > (SELECT COUNT(*) FROM {0}) - {1}", input, n);
+                            (body, schema.to_vec())
+                        } else if let Some(pred) = args.get(1).and_then(|a| a.as_expr()) {
+                            // Take-while-from-bottom: reverse-number rows, find first
+                            // failure in reverse order, keep only rows before that cutoff.
+                            let pred_sql = emit_expr(pred);
+                            let body = format!(
+                                "    WITH _t AS (SELECT *, ROW_NUMBER() OVER () AS _rn, ROW_NUMBER() OVER (ORDER BY (SELECT NULL) DESC) AS _rrn FROM {input}),\n         _stop AS (SELECT MIN(_rrn) AS _first_fail FROM _t WHERE NOT ({pred_sql}))\n    SELECT * FROM _t WHERE _rrn < COALESCE((SELECT _first_fail FROM _stop), _rrn + 1) ORDER BY _rn",
+                                input = input, pred_sql = pred_sql);
+                            (body, schema.to_vec())
+                        } else {
+                            (format!("    SELECT * FROM {} LIMIT 0", input), schema.to_vec())
+                        }
                     }
 
                     // â”€â”€ Skip / RemoveFirstN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -297,8 +308,22 @@ impl Generator {
                     // â”€â”€ Range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     "Table.Range" => {
                         let off = args.get(1).and_then(|a| a.as_int()).unwrap_or(0);
-                        let cnt = args.get(2).and_then(|a| a.as_int()).unwrap_or(0);
-                        (format!("    SELECT * FROM {} LIMIT {} OFFSET {}", input, cnt, off), schema.to_vec())
+                        // count absent or null → no LIMIT (return all rows after offset)
+                        let cnt_opt: Option<i64> = args.get(2).and_then(|a| {
+                            a.as_int().or_else(|| {
+                                // If it's an expression that is literally NullLit, treat as absent.
+                                a.as_expr().and_then(|e| {
+                                    use pq_ast::expr::Expr;
+                                    if matches!(e.expr, Expr::NullLit) { None }
+                                    else { None } // other exprs: fall back to no LIMIT
+                                })
+                            })
+                        });
+                        let body = match cnt_opt {
+                            Some(n) => format!("    SELECT * FROM {} LIMIT {} OFFSET {}", input, n, off),
+                            None    => format!("    SELECT * FROM {} OFFSET {}",          input, off),
+                        };
+                        (body, schema.to_vec())
                     }
 
                     // â”€â”€ RemoveLastN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -594,14 +619,34 @@ impl Generator {
 
                     // â”€â”€ ExpandTableColumn / ExpandRecordColumn â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     "Table.ExpandTableColumn" | "Table.ExpandRecordColumn" => {
-                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
-                        let columns  = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
-                        let kept: Vec<String> = schema.iter().filter(|(n, _)| n != col_name).map(|(n, _)| format!("        {}", qi(n))).collect();
-                        let expanded: Vec<String> = columns.iter().map(|c| format!("        {}.{} AS {}", qi(col_name), qi(c), qi(c))).collect();
+                        let col_name: String = match args.get(1) {
+                            Some(CallArg::Str(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::StringLit(s) => s.clone(),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        };
+                        let inner_cols = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let new_names_opt: Option<Vec<String>> = args.get(3).and_then(|a| a.as_expr()).and_then(|e| {
+                            if let Expr::List(items) = &e.expr {
+                                let names: Vec<String> = items.iter().filter_map(|it| {
+                                    if let Expr::StringLit(s) = &it.expr { Some(s.clone()) } else { None }
+                                }).collect();
+                                if names.len() == items.len() { Some(names) } else { None }
+                            } else { None }
+                        });
+                        let output_names: Vec<String> = new_names_opt.unwrap_or_else(|| inner_cols.iter().cloned().collect());
+                        let kept: Vec<String> = schema.iter()
+                            .filter(|(n, _)| n != &col_name)
+                            .map(|(n, _)| format!("        {}", qi(n))).collect();
+                        let expanded: Vec<String> = inner_cols.iter().zip(output_names.iter())
+                            .map(|(inner, out)| format!("        {}.{} AS {}", qi(&col_name), qi(inner), qi(out))).collect();
                         let mut all = kept; all.extend(expanded);
                         let body = format!("    SELECT\n{}\n    FROM {}", all.join(",\n"), input);
-                        let mut new_schema: Vec<(String, ColumnType)> = schema.iter().filter(|(n, _)| n != col_name).cloned().collect();
-                        for c in columns { new_schema.push((c.clone(), ColumnType::Text)); }
+                        let mut new_schema: Vec<(String, ColumnType)> = schema.iter()
+                            .filter(|(n, _)| n != &col_name).cloned().collect();
+                        for out_name in &output_names { new_schema.push((out_name.clone(), ColumnType::Text)); }
                         (body, new_schema)
                     }
 

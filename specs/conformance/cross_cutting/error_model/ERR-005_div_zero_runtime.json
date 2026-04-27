@@ -1,0 +1,9 @@
+{
+    "expect_err":  {
+                       "category":  "Execute"
+                   },
+    "rule":  "R-ERR-EXEC-DIV0",
+    "description":  "Runtime division by zero is an Execute error",
+    "id":  "ERR-005",
+    "formula":  "let Source = 0, R = 1 / 0 in R"
+}

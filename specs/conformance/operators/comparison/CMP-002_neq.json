@@ -1,0 +1,33 @@
+{
+    "id":  "CMP-002",
+    "rule":  "R-OP-CMP-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "3",
+                                  "4"
+                              ],
+                              [
+                                  "5",
+                                  "5"
+                              ]
+                          ],
+                 "source":  "o.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.SelectRows(Sheet1, each [A] \u003c\u003e [B])\r\nin\r\n    Result",
+    "description":  "Not-equal predicate",
+    "expect_ok":  {
+                      "rows":  [
+                                   [
+                                       "3",
+                                       "4"
+                                   ]
+                               ],
+                      "row_count":  1
+                  }
+}

@@ -1,0 +1,30 @@
+{
+    "id":  "F03-Sum-001",
+    "rule":  "R-LST-AGG",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "N"
+                              ],
+                              [
+                                  "1"
+                              ],
+                              [
+                                  "2"
+                              ],
+                              [
+                                  "3"
+                              ],
+                              [
+                                  "4"
+                              ]
+                          ],
+                 "source":  "i.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = List.Sum(Table.Column(Sheet1, \"N\"))\r\nin\r\n    Result",
+    "description":  "List.Sum over a column (currently observed as passthrough of source table)",
+    "expect_ok":  {
+                      "row_count":  4
+                  }
+}

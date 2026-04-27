@@ -1,0 +1,9 @@
+{
+    "expect_err":  {
+                       "category":  "Parse"
+                   },
+    "rule":  "R-ERR-PARSE",
+    "description":  "Missing in clause is a Parse error",
+    "id":  "ERR-002",
+    "formula":  "let Source = 0"
+}

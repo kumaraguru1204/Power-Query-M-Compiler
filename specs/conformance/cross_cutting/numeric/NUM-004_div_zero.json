@@ -1,0 +1,10 @@
+{
+    "expect_err":  {
+                       "category":  "Execute",
+                       "contains":  "zero"
+                   },
+    "rule":  "R-NUM-05",
+    "description":  "Division by zero is a runtime error",
+    "id":  "NUM-004",
+    "formula":  "let Source = 0, R = 1 / 0 in R"
+}

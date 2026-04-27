@@ -702,6 +702,16 @@ impl Parser {
         &mut self,
     ) -> ParseResult<(String, ExprNode, ColumnType)> {
         self.expect_token(TokenKind::LBrace)?;
+        let result = self.parse_aggregate_triple_content()?;
+        self.expect_token(TokenKind::RBrace)?;
+        Ok(result)
+    }
+
+    /// Parse the *interior* of an aggregate triple (without surrounding braces):
+    /// `"name", each expr [, type]`
+    fn parse_aggregate_triple_content(
+        &mut self,
+    ) -> ParseResult<(String, ExprNode, ColumnType)> {
         let (name, _) = self.expect_string()?;
         self.expect_token(TokenKind::Comma)?;
         let expr = if self.peek_kind() == &TokenKind::Each {
@@ -716,15 +726,22 @@ impl Parser {
         } else {
             ColumnType::Float
         };
-        self.expect_token(TokenKind::RBrace)?;
         Ok((name, expr, col_type))
     }
 
     /// Parse a list of aggregate specs: `{{"name", each expr, Type.X}, ...}`
+    /// Also accepts a single bare triple without outer braces:
+    /// `{"name", each expr}` or `{"name", each expr, Type.X}`
     fn parse_aggregate_list(
         &mut self,
     ) -> ParseResult<Vec<(String, ExprNode, ColumnType)>> {
         self.expect_token(TokenKind::LBrace)?;
+        // Single bare triple: first token after `{` is a string literal, not `{`
+        if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+            let triple = self.parse_aggregate_triple_content()?;
+            self.expect_token(TokenKind::RBrace)?;
+            return Ok(vec![triple]);
+        }
         let mut triples = vec![];
         while self.peek_kind() != &TokenKind::RBrace
             && self.peek_kind() != &TokenKind::Eof

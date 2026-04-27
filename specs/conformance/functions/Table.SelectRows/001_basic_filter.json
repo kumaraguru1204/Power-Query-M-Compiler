@@ -1,0 +1,16 @@
+{
+  "id": "F07-SelectRows-001",
+  "rule": "R-TBL-04",
+  "description": "Filter retains schema; predicate true on row 2 only",
+  "data": {
+    "source": "x.xlsx",
+    "sheet": "S",
+    "rows": [["Name","Age"], ["Alice","30"], ["Bob","25"], ["Charlie","35"]]
+  },
+  "formula": "let Source = Excel.Workbook(File.Contents(\"x\")), Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data], Filtered = Table.SelectRows(Sheet1, each [Age] = 25) in Filtered",
+  "expect_ok": {
+    "columns": ["Name","Age"],
+    "row_count": 1,
+    "rows": [["Bob","25"]]
+  }
+}

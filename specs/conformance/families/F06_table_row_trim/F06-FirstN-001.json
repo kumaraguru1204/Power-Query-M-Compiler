@@ -1,0 +1,40 @@
+{
+    "id":  "F06-FirstN-001",
+    "rule":  "R-TBL-06",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "N"
+                              ],
+                              [
+                                  "1"
+                              ],
+                              [
+                                  "2"
+                              ],
+                              [
+                                  "3"
+                              ],
+                              [
+                                  "4"
+                              ],
+                              [
+                                  "5"
+                              ]
+                          ],
+                 "source":  "n.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.FirstN(Sheet1, 2)\r\nin\r\n    Result",
+    "description":  "FirstN with count",
+    "expect_ok":  {
+                      "rows":  [
+                                   [
+                                       "1"
+                                   ],
+                                   [
+                                       "2"
+                                   ]
+                               ]
+                  }
+}

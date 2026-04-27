@@ -46,6 +46,11 @@ serde_json = "1.0"
 env_logger = "0.11"
 log = "0.4"
 
+[dev-dependencies]
+pq_pipeline   = { path = "crates/pq_pipeline" }
+pq_types      = { path = "crates/pq_types" }
+walkdir       = "2"
+
 [[bin]]
 name = "cli"
 path = "src/bin/cli.rs"
@@ -53,3 +58,15 @@ path = "src/bin/cli.rs"
 [[bin]]
 name = "web"
 path = "src/bin/web.rs"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Release profile — optimised for minimum binary size.
+# Build with:  cargo build --release
+# Expect: significantly slower release builds, much smaller .exe files.
+# ──────────────────────────────────────────────────────────────────────────
+[profile.release]
+opt-level = "z"        # Optimise for size (use "s" for a milder size/speed trade-off)
+lto = true             # Link-time optimisation across all 13 crates
+codegen-units = 1      # One codegen unit → maximum cross-module inlining/dead-code removal
+panic = "abort"        # Drop unwinding tables (smaller, but panics terminate the process)
+strip = true           # Strip debug symbols from the final binary

@@ -1,0 +1,28 @@
+{
+    "id":  "F01-TextLower-001",
+    "rule":  "R-TXT-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "S"
+                              ],
+                              [
+                                  "Hello"
+                              ],
+                              [
+                                  "World"
+                              ]
+                          ],
+                 "source":  "tx.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.AddColumn(Sheet1, \"L\", each Text.Lower([S]))\r\nin\r\n    Result",
+    "description":  "Text.Lower lowercases each value",
+    "expect_ok":  {
+                      "columns":  [
+                                      "S",
+                                      "L"
+                                  ],
+                      "row_count":  2
+                  }
+}

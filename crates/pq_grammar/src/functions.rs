@@ -290,7 +290,13 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     fndef!("IsEmpty",             [ArgKind::StepRef], sig(vec![Type::Table], Type::Boolean), "Table.IsEmpty(prev)"),
     fndef!("PartitionValues",     [ArgKind::StepRef], sig(vec![Type::Table], Type::Any),    "Table.PartitionValues(prev)"),
     fndef!("Profile",             [ArgKind::StepRef], sig(vec![Type::Table], Type::Table),  "Table.Profile(prev)"),
-    fndef!("RowCount",            [ArgKind::StepRef], sig(vec![Type::Table], Type::Number), "Table.RowCount(prev)"),
+    FunctionDef {
+        name:             "RowCount",
+        arg_hints:        vec![ArgKind::StepRefOrValue],
+        signatures:       vec![sig(vec![Type::Table], Type::Number)],
+        schema_transform: None,
+        doc:              "Table.RowCount(table) — number of rows; accepts a step ref or any table-producing expression",
+    },
     fndef!("Schema",              [ArgKind::StepRef], sig(vec![Type::Table], Type::Table),  "Table.Schema(prev)"),
 
     // Row operations ──────────────────────────────────────────────────────
@@ -323,7 +329,16 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         sig(vec![Type::Table, Type::Number, list(Type::Record)], Type::Table),
         "Table.InsertRows(prev, offset, {row,...})"),
     fndef!("Last",       [ArgKind::StepRef, ArgKind::Value],   sig(vec![Type::Table, Type::Any], Type::Record),  "Table.Last(prev, default)"),
-    fndef!("LastN",      [ArgKind::StepRef, ArgKind::Integer], sig(vec![Type::Table, Type::Number], Type::Table), "Table.LastN(prev, n)"),
+    FunctionDef {
+        name:             "LastN",
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::Value],
+        signatures:       vec![
+            sig(vec![Type::Table, Type::Number], Type::Table),
+            sig(vec![Type::Table, fun(vec![Type::Record], Type::Boolean)], Type::Table),
+        ],
+        schema_transform: Some(schema_passthrough),
+        doc:              "Table.LastN(prev, countOrCondition) — count (number) or each predicate (take-while from bottom)",
+    },
     FunctionDef {
         name:      "MatchesAllRows",
         arg_hints: vec![ArgKind::StepRef, ArgKind::EachExpr],
@@ -341,9 +356,16 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     fndef!("Partition",     [ArgKind::StepRef, ArgKind::StringLit, ArgKind::Integer],
         sig(vec![Type::Table, Type::Text, Type::Number], list(Type::Table)),
         "Table.Partition(prev, col, groups)"),
-    fndef!("Range",         [ArgKind::StepRef, ArgKind::Integer, ArgKind::Integer],
-        sig(vec![Type::Table, Type::Number, Type::Number], Type::Table),
-        "Table.Range(prev, offset, count)"),
+    FunctionDef {
+        name:             "Range",
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::Value, ArgKind::OptValue],
+        signatures:       vec![
+            sig(vec![Type::Table, Type::Number], Type::Table),
+            sigp(vec![p(Type::Table), p(Type::Number), opt(nullable(Type::Number))], Type::Table),
+        ],
+        schema_transform: Some(schema_passthrough),
+        doc:              "Table.Range(prev, offset, optional count) — count omitted/null means all rows after offset",
+    },
     fndef!("RemoveFirstN",  [ArgKind::StepRef, ArgKind::Integer], sig(vec![Type::Table, Type::Number], Type::Table), "Table.RemoveFirstN(prev, n)"),
     fndef!("RemoveLastN",   [ArgKind::StepRef, ArgKind::Integer], sig(vec![Type::Table, Type::Number], Type::Table), "Table.RemoveLastN(prev, n)"),
     fndef!("RemoveRows",    [ArgKind::StepRef, ArgKind::Integer, ArgKind::Integer],
@@ -370,7 +392,7 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     FunctionDef {
         // (Table, (Record) → Boolean) → Table
         name:             "SelectRows",
-        arg_hints:        vec![ArgKind::StepRef, ArgKind::EachExpr],
+        arg_hints:        vec![ArgKind::StepRefOrValue, ArgKind::EachExpr],
         signatures:       vec![sig(vec![Type::Table, fun(vec![Type::Record], Type::Boolean)], Type::Table)],
         schema_transform: Some(schema_passthrough),
         doc:              "Table.SelectRows(prev, each predicate)",
@@ -396,7 +418,13 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         schema_transform: None,
         doc: "Table.Column(prev, col) → List<T>",
     },
-    fndef!("ColumnNames", [ArgKind::StepRef], sig(vec![Type::Table], list(Type::Text)), "Table.ColumnNames(prev)"),
+    FunctionDef {
+        name:             "ColumnNames",
+        arg_hints:        vec![ArgKind::StepRefOrValue],
+        signatures:       vec![sig(vec![Type::Table], list(Type::Text))],
+        schema_transform: None,
+        doc:              "Table.ColumnNames(table) -- list of column names; accepts a step ref or any table-producing expression",
+    },
     fndef!("ColumnsOfType", [ArgKind::StepRefOrValue, ArgKind::BareTypeList],
         sig(vec![Type::Table, list(Type::Any)], list(Type::Text)),
         "Table.ColumnsOfType(prev, {type,...})"),
@@ -537,9 +565,22 @@ fn table_functions() -> Vec<FunctionDef> { vec![
     fndef!("ExpandRecordColumn", [ArgKind::StepRef, ArgKind::StringLit, ArgKind::ColumnList],
         sig(vec![Type::Table, Type::Text, list(Type::Text)], Type::Table),
         "Table.ExpandRecordColumn(prev, col, {field,...})"),
-    fndef!("ExpandTableColumn", [ArgKind::StepRef, ArgKind::StringLit, ArgKind::ColumnList],
-        sig(vec![Type::Table, Type::Text, list(Type::Text)], Type::Table),
-        "Table.ExpandTableColumn(prev, col, {col,...})"),
+    FunctionDef {
+        name:      "ExpandTableColumn",
+        arg_hints: vec![
+            ArgKind::StepRefOrValue,   // table  — Gap 2: accept nested call
+            ArgKind::Value,            // column — Gap 3: accept any expr
+            ArgKind::ColumnList,       // columnNames
+            ArgKind::OptValue,         // newColumnNames — Gap 1: optional rename list
+        ],
+        signatures: vec![
+            sig(vec![Type::Table, Type::Text, list(Type::Text)], Type::Table),
+            sigp(vec![p(Type::Table), p(Type::Text), p(list(Type::Text)),
+                      opt(nullable(list(Type::Text)))], Type::Table),
+        ],
+        schema_transform: None,
+        doc: "Table.ExpandTableColumn(table, column, {col,...}, optional {newCol,...})",
+    },
     FunctionDef {
         name:             "FillDown",
         arg_hints:        vec![ArgKind::StepRef, ArgKind::ColumnList],
@@ -566,10 +607,26 @@ fn table_functions() -> Vec<FunctionDef> { vec![
         [ArgKind::StepRef, ArgKind::ColumnList, ArgKind::StepRef, ArgKind::ColumnList, ArgKind::StringLit, ArgKind::JoinKind],
         sig(vec![Type::Table, list(Type::Text), Type::Table, list(Type::Text), Type::Text, Type::Any], Type::Table),
         "Table.FuzzyNestedJoin(prev, {key}, other, {key}, newCol, JoinKind.X)"),
-    fndef!("Group",
-        [ArgKind::StepRef, ArgKind::ColumnList, ArgKind::AggregateList],
-        sig(vec![Type::Table, list(Type::Text), list(Type::Any)], Type::Table),
-        "Table.Group(prev, {key,...}, {{name,each expr,type},...})"),
+    FunctionDef {
+        name:             "Group",
+        arg_hints:        vec![
+            ArgKind::StepRefOrValue,      // table — accepts nested call (Gap 5)
+            ArgKind::ColumnListOrString,  // key — single string OR list (Gap 1)
+            ArgKind::AggregateList,       // aggregatedColumns — bare single triple supported in parser (Gap 2)
+            ArgKind::OptValue,            // groupKind — number / null / GroupKind.X (Gap 3)
+            ArgKind::OptValue,            // comparer — function / each / null (Gap 4)
+        ],
+        signatures:       vec![
+            sig(vec![Type::Table, list(Type::Text), list(Type::Any)], Type::Table),
+            sigp(vec![p(Type::Table), p(Type::Text), p(list(Type::Any))], Type::Table),
+            sigp(vec![p(Type::Table), p(Type::Any), p(list(Type::Any)),
+                      opt(nullable(Type::Number))], Type::Table),
+            sigp(vec![p(Type::Table), p(Type::Any), p(list(Type::Any)),
+                      opt(nullable(Type::Number)), opt(nullable(Type::Any))], Type::Table),
+        ],
+        schema_transform: None,
+        doc:              "Table.Group(prev, key|{key,...}, {{name,each expr,type},...} or {name,each expr,type}, optional groupKind, optional comparer)",
+    },
     fndef!("Join",
         [ArgKind::StepRef, ArgKind::ColumnList, ArgKind::StepRef, ArgKind::ColumnList, ArgKind::JoinKind],
         sig(vec![Type::Table, list(Type::Text), Type::Table, list(Type::Text), Type::Any], Type::Table),
@@ -1410,7 +1467,7 @@ mod tests {
         let f = lookup_function("Table", "SelectRows").unwrap();
         assert_eq!(f.name, "SelectRows");
         assert_eq!(f.arg_hints.len(), 2);
-        assert_eq!(f.arg_hints[0], ArgKind::StepRef);
+        assert_eq!(f.arg_hints[0], ArgKind::StepRefOrValue);
         assert_eq!(f.arg_hints[1], ArgKind::EachExpr);
     }
 

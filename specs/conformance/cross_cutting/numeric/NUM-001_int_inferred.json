@@ -1,0 +1,34 @@
+{
+    "id":  "NUM-001",
+    "rule":  "R-NUM-08",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "1",
+                                  "2.0"
+                              ],
+                              [
+                                  "3",
+                                  "4.0"
+                              ]
+                          ],
+                 "source":  "n.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data]\r\nin\r\n    Sheet1",
+    "description":  "Column of integer literals is inferred Integer",
+    "expect_ok":  {
+                      "types":  [
+                                    "Integer",
+                                    "Float"
+                                ],
+                      "columns":  [
+                                      "A",
+                                      "B"
+                                  ]
+                  }
+}

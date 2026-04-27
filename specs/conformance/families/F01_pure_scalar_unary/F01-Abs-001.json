@@ -1,0 +1,27 @@
+{
+    "id":  "F01-NumberAbs-001",
+    "rule":  "R-NUM-09",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "X"
+                              ],
+                              [
+                                  "-3"
+                              ],
+                              [
+                                  "4"
+                              ],
+                              [
+                                  "-5"
+                              ]
+                          ],
+                 "source":  "n.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.AddColumn(Sheet1, \"Y\", each Number.Abs([X]))\r\nin\r\n    Result",
+    "description":  "Number.Abs of negative integer",
+    "expect_ok":  {
+                      "row_count":  3
+                  }
+}

@@ -1,0 +1,9 @@
+{
+    "expect_err":  {
+                       "category":  "Lex"
+                   },
+    "rule":  "R-ERR-LEX",
+    "description":  "Unterminated string literal is a Lex error",
+    "id":  "ERR-001",
+    "formula":  "let Source = 0, Bad = \"unterminated in Bad"
+}

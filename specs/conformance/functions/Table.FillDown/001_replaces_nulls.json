@@ -1,0 +1,35 @@
+{
+    "id":  "F09-FillDown-001",
+    "rule":  "R-TBL-FILL-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "x",
+                                  "1"
+                              ],
+                              [
+                                  "",
+                                  "2"
+                              ],
+                              [
+                                  "y",
+                                  "3"
+                              ]
+                          ],
+                 "source":  "fd.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.FillDown(Sheet1, {\"A\"})\r\nin\r\n    Result",
+    "description":  "FillDown propagates the last non-null value down",
+    "expect_ok":  {
+                      "columns":  [
+                                      "A",
+                                      "B"
+                                  ],
+                      "row_count":  3
+                  }
+}

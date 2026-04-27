@@ -677,12 +677,28 @@ impl<'a> TypeChecker<'a> {
 
                     // â”€â”€ ExpandTableColumn / ExpandRecordColumn â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     "Table.ExpandTableColumn" | "Table.ExpandRecordColumn" => {
-                        let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
-                        let columns  = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let col_name: String = match args.get(1) {
+                            Some(CallArg::Str(s)) => s.clone(),
+                            Some(CallArg::Expr(e)) => match &e.expr {
+                                Expr::StringLit(s) => s.clone(),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        };
+                        let inner_cols = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                        let new_names_opt: Option<Vec<String>> = args.get(3).and_then(|a| a.as_expr()).and_then(|e| {
+                            if let Expr::List(items) = &e.expr {
+                                let names: Vec<String> = items.iter().filter_map(|it| {
+                                    if let Expr::StringLit(s) = &it.expr { Some(s.clone()) } else { None }
+                                }).collect();
+                                if names.len() == items.len() { Some(names) } else { None }
+                            } else { None }
+                        });
+                        let output_names: Vec<String> = new_names_opt.unwrap_or_else(|| inner_cols.iter().cloned().collect());
                         input_schema.map(|s| {
                             let mut out: Vec<(String, ColumnType)> = s.into_iter()
-                                .filter(|(n, _)| n != col_name).collect();
-                            out.extend(columns.iter().map(|c| (c.clone(), ColumnType::Text)));
+                                .filter(|(n, _)| n != &col_name).collect();
+                            out.extend(output_names.iter().map(|c| (c.clone(), ColumnType::Text)));
                             out
                         })
                     }

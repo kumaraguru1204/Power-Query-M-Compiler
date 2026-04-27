@@ -1,0 +1,32 @@
+{
+    "id":  "ARITH-001",
+    "rule":  "R-OP-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "3",
+                                  "4"
+                              ],
+                              [
+                                  "5",
+                                  "5"
+                              ]
+                          ],
+                 "source":  "o.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.AddColumn(Sheet1, \"S\", each [A] + [B])\r\nin\r\n    Result",
+    "description":  "Integer + Integer",
+    "expect_ok":  {
+                      "columns":  [
+                                      "A",
+                                      "B",
+                                      "S"
+                                  ],
+                      "row_count":  2
+                  }
+}

@@ -1,0 +1,31 @@
+{
+    "id":  "LOG-001",
+    "rule":  "R-OP-LOG-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "1",
+                                  "1"
+                              ],
+                              [
+                                  "1",
+                                  "2"
+                              ],
+                              [
+                                  "2",
+                                  "2"
+                              ]
+                          ],
+                 "source":  "l.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.SelectRows(Sheet1, each [A] = 1 and [B] = 1)\r\nin\r\n    Result",
+    "description":  "Logical AND predicate",
+    "expect_ok":  {
+                      "row_count":  1
+                  }
+}

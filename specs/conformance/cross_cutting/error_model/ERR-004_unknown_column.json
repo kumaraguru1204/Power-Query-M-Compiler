@@ -1,0 +1,40 @@
+{
+    "id":  "ERR-004",
+    "rule":  "R-ERR-RESOLVE",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "Name",
+                                  "Dept",
+                                  "Salary"
+                              ],
+                              [
+                                  "Alice",
+                                  "HR",
+                                  "50000"
+                              ],
+                              [
+                                  "Bob",
+                                  "IT",
+                                  "40000"
+                              ],
+                              [
+                                  "Charlie",
+                                  "HR",
+                                  "60000"
+                              ],
+                              [
+                                  "Dora",
+                                  "IT",
+                                  "40000"
+                              ]
+                          ],
+                 "source":  "tx.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.SelectRows(Sheet1, each [NoSuch] = 1)\r\nin\r\n    Result",
+    "description":  "Reference to an unknown column is a Diagnostics error",
+    "expect_err":  {
+                       "category":  "Diagnostics"
+                   }
+}

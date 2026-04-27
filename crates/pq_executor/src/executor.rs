@@ -107,6 +107,58 @@ impl Executor {
                 let synthetic = StepKind::FunctionCall { name: name.clone(), args: call_args };
                 Self::run_step(&synthetic, env, source)
             }
+            // Table.FirstN / Table.LastN inside `in` — parsed via parse_expr (no grammar hints),
+            // so arg 0 is Identifier("Source"), not StepRef.  Convert it to StepRef so that
+            // eval_function_call can resolve the input table correctly.
+            // Only activate when arg 0 is a bare identifier; nested calls (e.g.
+            // Table.SelectRows(...)) fall through to the Null-graceful `_` arm.
+            Expr::FunctionCall { name, args }
+                if (name == "Table.FirstN" || name == "Table.LastN")
+                    && !args.is_empty()
+                    && matches!(&args[0].expr, Expr::Identifier(_)) =>
+            {
+                let step_arg = match &args[0].expr {
+                    Expr::Identifier(n) => CallArg::StepRef(n.clone()),
+                    _                   => CallArg::Expr(args[0].clone()),
+                };
+                let mut call_args: Vec<CallArg> = vec![step_arg];
+                call_args.extend(args[1..].iter().map(|a| CallArg::Expr(a.clone())));
+                let synthetic = StepKind::FunctionCall { name: name.clone(), args: call_args };
+                Self::run_step(&synthetic, env, source)
+            }
+            // Table.SelectRows inside `in` — same pattern as FirstN/LastN.
+            // When arg 0 is a bare identifier (step ref), convert to StepRef so the
+            // executor can look up the real table and apply the filter correctly.
+            // Nested-call first args fall through to the Null-graceful `_` arm.
+            Expr::FunctionCall { name, args }
+                if name == "Table.SelectRows"
+                    && !args.is_empty()
+                    && matches!(&args[0].expr, Expr::Identifier(_)) =>
+            {
+                let step_arg = match &args[0].expr {
+                    Expr::Identifier(n) => CallArg::StepRef(n.clone()),
+                    _                   => CallArg::Expr(args[0].clone()),
+                };
+                let mut call_args: Vec<CallArg> = vec![step_arg];
+                call_args.extend(args[1..].iter().map(|a| CallArg::Expr(a.clone())));
+                let synthetic = StepKind::FunctionCall { name: name.clone(), args: call_args };
+                Self::run_step(&synthetic, env, source)
+            }
+            // Table.RowCount inside `in` — arg 0 may be a bare step identifier or a
+            // nested table-producing call.  Delegate to eval_table_expr which handles
+            // both shapes (and deep nesting) recursively.
+            Expr::FunctionCall { name, args }
+                if name == "Table.RowCount" && !args.is_empty() =>
+            {
+                let inner = Self::eval_table_expr(&args[0], env, source)?;
+                let count = inner.row_count();
+                Ok(Table {
+                    source:  source.source.clone(),
+                    sheet:   source.sheet.clone(),
+                    columns: vec![Column { name: "Value".into(), col_type: ColumnType::Integer,
+                                          values: vec![count.to_string()] }],
+                })
+            }
             _ => {
                 let v = Self::eval_expr(expr, source, 0)?;
                 let values: Vec<String> = match &v {
@@ -371,21 +423,69 @@ impl Executor {
                 let aggregates = args.get(2).and_then(|a| a.as_agg_list()).unwrap_or(&[]);
                 let t          = Self::lookup(input_name, env, source)?;
                 let row_count  = t.row_count();
+
+                // Gap 3 — optional groupKind: GroupKind.Local → sequential grouping.
+                let is_local = args.get(3).and_then(|a| a.as_expr()).map(|e| {
+                    matches!(&e.expr, Expr::Identifier(n) if n == "GroupKind.Local")
+                }).unwrap_or(false);
+
+                // Gap 4 — optional comparer: Comparer.OrdinalIgnoreCase → lowercase keys.
+                let ignore_case = args.get(4).and_then(|a| a.as_expr()).map(|e| {
+                    matches!(&e.expr, Expr::Identifier(n) if n == "Comparer.OrdinalIgnoreCase")
+                }).unwrap_or(false);
+
+                let key_for = |row: usize| -> Vec<String> {
+                    by.iter().map(|col| {
+                        let v = Self::cell(t, col, row).to_string();
+                        if ignore_case { v.to_lowercase() } else { v }
+                    }).collect()
+                };
+
                 let mut key_order: Vec<Vec<String>> = Vec::new();
                 let mut key_rows: HashMap<Vec<String>, Vec<usize>> = HashMap::new();
-                for i in 0..row_count {
-                    let key: Vec<String> = by.iter().map(|col| Self::cell(t, col, i).to_string()).collect();
-                    let entry = key_rows.entry(key.clone()).or_insert_with(|| {
-                        key_order.push(key.clone());
-                        Vec::new()
-                    });
-                    entry.push(i);
+
+                if is_local {
+                    // Sequential grouping — emit a new group whenever the key changes.
+                    let mut prev_key: Option<Vec<String>> = None;
+                    for i in 0..row_count {
+                        let key = key_for(i);
+                        if prev_key.as_ref() != Some(&key) {
+                            key_order.push(key.clone());
+                            key_rows.insert(key.clone(), Vec::new());
+                            prev_key = Some(key.clone());
+                        }
+                        key_rows.get_mut(&key).unwrap().push(i);
+                    }
+                } else {
+                    for i in 0..row_count {
+                        let key = key_for(i);
+                        let entry = key_rows.entry(key.clone()).or_insert_with(|| {
+                            key_order.push(key.clone());
+                            Vec::new()
+                        });
+                        entry.push(i);
+                    }
                 }
+
+                // Rebuild display keys from original (non-lowercased) values if ignore_case.
+                let display_key_order: Vec<Vec<String>> = if ignore_case {
+                    key_order.iter().map(|lk| {
+                        // Find the first row whose lowercased key matches, use its original values.
+                        (0..row_count).find(|&i| {
+                            by.iter().map(|c| Self::cell(t, c, i).to_lowercase())
+                                .collect::<Vec<_>>() == *lk
+                        }).map(|i| by.iter().map(|c| Self::cell(t, c, i).to_string()).collect())
+                            .unwrap_or_else(|| lk.clone())
+                    }).collect()
+                } else {
+                    key_order.clone()
+                };
+
                 let mut out_cols: Vec<Column> = by.iter().map(|col_name| {
                     let col_type = t.get_column(col_name).map(|c| c.col_type.clone()).unwrap_or(ColumnType::Text);
                     Column {
                         name: col_name.clone(), col_type,
-                        values: key_order.iter()
+                        values: display_key_order.iter()
                             .map(|k| k[by.iter().position(|c| c == col_name).unwrap()].clone())
                             .collect(),
                     }
@@ -444,11 +544,44 @@ impl Executor {
 
             // ── LastN ─────────────────────────────────────────────────────
             "Table.LastN" => {
-                let t     = Self::lookup(input_name, env, source)?;
-                let n     = args.get(1).and_then(|a| a.as_int()).unwrap_or(1) as usize;
-                let rc    = t.row_count();
-                let start = rc.saturating_sub(n);
-                Ok(Self::select_rows(t, &(start..rc).collect::<Vec<_>>()))
+                let t  = Self::lookup(input_name, env, source)?;
+                let rc = t.row_count();
+                let arg2 = args.get(1);
+
+                // Branch 1: integer literal or numeric expression → take from bottom.
+                let count_opt: Option<usize> = arg2.and_then(|a| a.as_int()).map(|n| n as usize)
+                    .or_else(|| {
+                        arg2.and_then(|a| a.as_expr()).and_then(|e| {
+                            match Self::eval_expr(e, t, 0).ok()? {
+                                Value::Int(n)   => Some(n.max(0) as usize),
+                                Value::Float(f) => Some(f.max(0.0) as usize),
+                                _ => None,
+                            }
+                        })
+                    });
+
+                if let Some(n) = count_opt {
+                    let start = rc.saturating_sub(n);
+                    return Ok(Self::select_rows(t, &(start..rc).collect::<Vec<_>>()));
+                }
+
+                // Branch 2: predicate (each / lambda / function ref) → take-while from bottom.
+                // Scan UPWARD from the last row; STOP at the first failing row.
+                // Return rows in original (top-to-bottom) order.
+                if let Some(pred_expr) = arg2.and_then(|a| a.as_expr()) {
+                    let mut keep_rev: Vec<usize> = Vec::new();
+                    for i in (0..rc).rev() {
+                        if !matches!(Self::eval_expr(pred_expr, t, i), Ok(Value::Bool(true))) {
+                            break;
+                        }
+                        keep_rev.push(i);
+                    }
+                    keep_rev.reverse();
+                    return Ok(Self::select_rows(t, &keep_rev));
+                }
+
+                // Fallback: nothing usable → empty table.
+                Ok(Self::select_rows(t, &[]))
             }
 
             // ── Skip ──────────────────────────────────────────────────────
@@ -461,11 +594,34 @@ impl Executor {
 
             // ── Range ─────────────────────────────────────────────────────
             "Table.Range" => {
-                let t   = Self::lookup(input_name, env, source)?;
-                let off = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
-                let cnt = args.get(2).and_then(|a| a.as_int()).unwrap_or(1) as usize;
-                let rc  = t.row_count();
-                Ok(Self::select_rows(t, &(off.min(rc)..(off + cnt).min(rc)).collect::<Vec<_>>()))
+                let t  = Self::lookup(input_name, env, source)?;
+                let rc = t.row_count();
+
+                // Helper: resolve a numeric arg (literal int or any expression,
+                // including null which signals "all remaining").
+                let to_num = |a: Option<&CallArg>| -> Option<i64> {
+                    a.and_then(|a| a.as_int())
+                        .or_else(|| {
+                            a.and_then(|a| a.as_expr()).and_then(|e| {
+                                match Self::eval_expr(e, t, 0).ok()? {
+                                    Value::Int(n)   => Some(n),
+                                    Value::Float(f) => Some(f as i64),
+                                    Value::Null     => None,  // null → all remaining
+                                    _ => None,
+                                }
+                            })
+                        })
+                };
+
+                let off = to_num(args.get(1)).unwrap_or(0).max(0) as usize;
+                // count omitted OR null → take all rows after offset
+                let cnt = to_num(args.get(2))
+                    .map(|n| n.max(0) as usize)
+                    .unwrap_or_else(|| rc.saturating_sub(off));
+
+                let start = off.min(rc);
+                let end   = (off + cnt).min(rc);
+                Ok(Self::select_rows(t, &(start..end).collect::<Vec<_>>()))
             }
 
             // ── RemoveFirstN ──────────────────────────────────────────────
@@ -894,14 +1050,43 @@ impl Executor {
 
             // ── ExpandTableColumn / ExpandRecordColumn ────────────────────
             "Table.ExpandTableColumn" | "Table.ExpandRecordColumn" => {
-                let col_name = args.get(1).and_then(|a| a.as_str()).unwrap_or("");
-                let columns  = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
-                let t        = Self::lookup(input_name, env, source)?;
-                let rc       = t.row_count();
+                // arg 0: table — StepRef or nested table-producing expression (Gap 2)
+                let t = match args.first() {
+                    Some(CallArg::StepRef(name)) => Self::lookup(name, env, source)?.clone(),
+                    Some(CallArg::Expr(e))       => Self::eval_table_expr(e, env, source)?,
+                    _                            => source.clone(),
+                };
+                // arg 1: column name — Str literal or any expression (Gap 3)
+                let col_name: String = match args.get(1) {
+                    Some(CallArg::Str(s))  => s.clone(),
+                    Some(CallArg::Expr(e)) => match Self::eval_expr(e, &t, 0)? {
+                        Value::Text(s) => s,
+                        other          => other.to_raw_string(),
+                    },
+                    _ => String::new(),
+                };
+                // arg 2: columnNames — brace list of column-name strings
+                let inner_cols = args.get(2).and_then(|a| a.as_col_list()).unwrap_or(&[]);
+                // arg 3: newColumnNames — optional list or null (Gap 1)
+                let new_names: Vec<String> = match args.get(3).and_then(|a| a.as_expr()) {
+                    Some(e) => match Self::eval_expr(e, &t, 0)? {
+                        Value::Null     => inner_cols.iter().cloned().collect(),
+                        Value::List(xs) => xs.iter().map(|v| v.to_raw_string()).collect(),
+                        _               => inner_cols.iter().cloned().collect(),
+                    },
+                    None => inner_cols.iter().cloned().collect(),
+                };
+                if new_names.len() != inner_cols.len() {
+                    return Err(ExecError::TypeMismatch(format!(
+                        "Table.ExpandTableColumn: newColumnNames length ({}) must equal columnNames length ({})",
+                        new_names.len(), inner_cols.len()
+                    )));
+                }
+                let rc = t.row_count();
                 let mut result = t.clone();
                 result.columns.retain(|c| c.name != col_name);
-                for c in columns {
-                    result.columns.push(Column { name: c.clone(), col_type: ColumnType::Text, values: vec![String::new(); rc] });
+                for out_name in &new_names {
+                    result.columns.push(Column { name: out_name.clone(), col_type: ColumnType::Text, values: vec![String::new(); rc] });
                 }
                 Ok(result)
             }
@@ -944,7 +1129,12 @@ impl Executor {
 
             // ── RowCount ──────────────────────────────────────────────────
             "Table.RowCount" => {
-                let t = Self::lookup(input_name, env, source)?;
+                // arg 0 is either StepRef (bare step name) or Expr (nested call)
+                let t = match args.first() {
+                    Some(CallArg::StepRef(name)) => Self::lookup(name, env, source)?.clone(),
+                    Some(CallArg::Expr(e))       => Self::eval_table_expr(e, env, source)?,
+                    _                            => source.clone(),
+                };
                 Ok(Table { source: t.source.clone(), sheet: t.sheet.clone(),
                     columns: vec![Column { name: "Value".into(), col_type: ColumnType::Integer, values: vec![t.row_count().to_string()] }] })
             }
@@ -958,7 +1148,11 @@ impl Executor {
 
             // ── ColumnNames ───────────────────────────────────────────────
             "Table.ColumnNames" => {
-                let t = Self::lookup(input_name, env, source)?;
+                let t = match args.first() {
+                    Some(CallArg::StepRef(name)) => Self::lookup(name, env, source)?.clone(),
+                    Some(CallArg::Expr(e))       => Self::eval_table_expr(e, env, source)?,
+                    _                            => source.clone(),
+                };
                 let names: Vec<String> = t.columns.iter().map(|c| c.name.clone()).collect();
                 Ok(Table { source: t.source.clone(), sheet: t.sheet.clone(),
                     columns: vec![Column { name: "Value".into(), col_type: ColumnType::Text, values: names }] })
@@ -2447,6 +2641,52 @@ impl Executor {
         env.get(name)
             .or_else(|| (name == "Source").then_some(source))
             .ok_or_else(|| ExecError::UnknownStep(name.to_string()))
+    }
+
+    /// Evaluate an expression that must produce a `Table`.
+    ///
+    /// Handles two shapes:
+    /// - `Expr::Identifier(name)` — bare step reference: look up in `env` / `source`.
+    /// - `Expr::FunctionCall { name, args }` — nested table-producing call.  Arg 0 is
+    ///   itself evaluated recursively; the result is injected into a synthetic env so
+    ///   that `eval_function_call`'s `input_name` / `lookup` path works correctly for
+    ///   arbitrarily deep nesting.
+    fn eval_table_expr(
+        expr:   &ExprNode,
+        env:    &HashMap<String, Table>,
+        source: &Table,
+    ) -> ExecResult<Table> {
+        match &expr.expr {
+            Expr::Identifier(name) => Ok(Self::lookup(name, env, source)?.clone()),
+            Expr::FunctionCall { name, args } => {
+                // Resolve arg 0 (the table input) and decide how to pass it.
+                let (first_arg, ext_env): (CallArg, Option<HashMap<String, Table>>) =
+                    match args.first().map(|a| &a.expr) {
+                        Some(Expr::Identifier(n)) => (CallArg::StepRef(n.clone()), None),
+                        Some(_) => {
+                            // Recursively evaluate the nested first arg, then inject it
+                            // under a synthetic key so downstream lookup succeeds.
+                            let inner = Self::eval_table_expr(args.first().unwrap(), env, source)?;
+                            let mut ext = env.clone();
+                            ext.insert("__pq_inner__".to_string(), inner);
+                            (CallArg::StepRef("__pq_inner__".to_string()), Some(ext))
+                        }
+                        None => return Err(ExecError::TypeMismatch(
+                            format!("{}: missing table argument", name)
+                        )),
+                    };
+                let mut call_args: Vec<CallArg> = vec![first_arg];
+                call_args.extend(args.iter().skip(1).map(|a| CallArg::Expr(a.clone())));
+                let synthetic = StepKind::FunctionCall { name: name.clone(), args: call_args };
+                match ext_env {
+                    Some(ref ext) => Self::run_step(&synthetic, ext, source),
+                    None          => Self::run_step(&synthetic, env, source),
+                }
+            }
+            _ => Err(ExecError::TypeMismatch(
+                "expected a table-producing expression (identifier or function call)".to_string()
+            )),
+        }
     }
 
     /// Evaluate a zero-param lambda `() => expr` by calling its body with

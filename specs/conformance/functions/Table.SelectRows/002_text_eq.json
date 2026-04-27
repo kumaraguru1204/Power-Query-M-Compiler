@@ -1,0 +1,52 @@
+{
+    "id":  "F07-SelectRows-002",
+    "rule":  "R-TBL-04",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "Name",
+                                  "Dept",
+                                  "Salary"
+                              ],
+                              [
+                                  "Alice",
+                                  "HR",
+                                  "50000"
+                              ],
+                              [
+                                  "Bob",
+                                  "IT",
+                                  "40000"
+                              ],
+                              [
+                                  "Charlie",
+                                  "HR",
+                                  "60000"
+                              ],
+                              [
+                                  "Dora",
+                                  "IT",
+                                  "40000"
+                              ]
+                          ],
+                 "source":  "tx.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.SelectRows(Sheet1, each [Dept] = \"HR\")\r\nin\r\n    Result",
+    "description":  "Filter by text column equality",
+    "expect_ok":  {
+                      "rows":  [
+                                   [
+                                       "Alice",
+                                       "HR",
+                                       "50000"
+                                   ],
+                                   [
+                                       "Charlie",
+                                       "HR",
+                                       "60000"
+                                   ]
+                               ],
+                      "row_count":  2
+                  }
+}

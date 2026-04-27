@@ -1,0 +1,213 @@
+﻿namespace	name	min_arity	max_arity	n_overloads	arg_hints	schema_hook	primary_signature	doc
+Excel	Workbook	1	3	1	filepath,nbool?,nbool?		(Any, Any?, nullable Boolean?) -> Table	Excel.Workbook(File.Contents(path), optional useHeaders, optional delayTypes) - Returns the contents of the Excel workbook as a table.
+Table	FromColumns	2	2	1	val,cols		(List<List<Any>>, List<Text>) -> Table	Table.FromColumns({list1,...},{col,...})
+Table	FromList	1	1	2	step|val,val?		(List<T>) -> Table	Table.FromList(list, optional each splitter)
+Table	FromRecords	1	1	1	step|val		(List<Record>) -> Table	Table.FromRecords(records)
+Table	FromRows	2	2	1	val,cols		(List<Any>, List<Text>) -> Table	Table.FromRows({row,...},{col,...})
+Table	FromValue	1	1	1	val,rec?		(Any) -> Table	Table.FromValue(value, optional [DefaultFieldName=...])
+Table	ToColumns	1	1	1	step		(Table) -> List<List<Any>>	Table.ToColumns(prev)
+Table	ToList	1	1	2	step,val?		(Table) -> List<T>	Table.ToList(prev, optional each combiner)
+Table	ToRecords	1	1	1	step		(Table) -> List<Record>	Table.ToRecords(prev)
+Table	ToRows	1	1	1	step		(Table) -> List<List<Any>>	Table.ToRows(prev)
+Table	ApproximateRowCount	1	1	1	step		(Table) -> Number	Table.ApproximateRowCount(prev)
+Table	ColumnCount	1	1	1	step		(Table) -> Number	Table.ColumnCount(prev)
+Table	IsEmpty	1	1	1	step		(Table) -> Boolean	Table.IsEmpty(prev)
+Table	PartitionValues	1	1	1	step		(Table) -> Any	Table.PartitionValues(prev)
+Table	Profile	1	1	1	step		(Table) -> Table	Table.Profile(prev)
+Table	RowCount	1	1	1	step|val		(Table) -> Number	Table.RowCount(table) - number of rows; accepts a step ref or any table-producing expression
+Table	Schema	1	1	1	step		(Table) -> Table	Table.Schema(prev)
+Table	AlternateRows	4	4	1	step,int,int,int		(Table, Number, Number, Number) -> Table	Table.AlternateRows(prev, offset, skip, take)
+Table	Combine	1	1	1	steplist		(List<Table>) -> Table	Table.Combine({t1,t2,...})
+Table	FindText	2	2	1	step,str		(Table, Text) -> Table	Table.FindText(prev, text)
+Table	First	2	2	1	step,val		(Table, Any) -> Record	Table.First(prev, default)
+Table	FirstN	2	2	2	step|val,val	yes	(Table, Number) -> Table	Table.FirstN(prev, countOrCondition) - count (number) or each predicate (take-while)
+Table	FirstValue	2	2	1	step,val		(Table, T) -> T	Table.FirstValue(prev, default)
+Table	FromPartitions	2	2	1	str,step		(Text, Table) -> Table	Table.FromPartitions(col, partitions)
+Table	InsertRows	3	3	1	step,int,reclist		(Table, Number, List<Record>) -> Table	Table.InsertRows(prev, offset, {row,...})
+Table	Last	2	2	1	step,val		(Table, Any) -> Record	Table.Last(prev, default)
+Table	LastN	2	2	2	step|val,val	yes	(Table, Number) -> Table	Table.LastN(prev, countOrCondition) - count (number) or each predicate (take-while from bottom)
+Table	MatchesAllRows	2	2	1	step,each		(Table, (Record) -> Boolean) -> Boolean	Table.MatchesAllRows(prev, each pred)
+Table	MatchesAnyRows	2	2	1	step,each		(Table, (Record) -> Boolean) -> Boolean	Table.MatchesAnyRows(prev, each pred)
+Table	Partition	3	3	1	step,str,int		(Table, Text, Number) -> List<Table>	Table.Partition(prev, col, groups)
+Table	Range	2	2	2	step|val,val,val?	yes	(Table, Number) -> Table	Table.Range(prev, offset, optional count) - count omitted/null means all rows after offset
+Table	RemoveFirstN	2	2	1	step,int		(Table, Number) -> Table	Table.RemoveFirstN(prev, n)
+Table	RemoveLastN	2	2	1	step,int		(Table, Number) -> Table	Table.RemoveLastN(prev, n)
+Table	RemoveRows	3	3	1	step,int,int		(Table, Number, Number) -> Table	Table.RemoveRows(prev, offset, count)
+Table	RemoveRowsWithErrors	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.RemoveRowsWithErrors(prev, {col,...})
+Table	Repeat	2	2	1	step,int		(Table, Number) -> Table	Table.Repeat(prev, n)
+Table	ReplaceRows	4	4	1	step,int,int,reclist		(Table, Number, Number, List<Record>) -> Table	Table.ReplaceRows(prev, offset, count, {row,...})
+Table	ReverseRows	1	1	1	step	yes	(Table) -> Table	Table.ReverseRows(prev)
+Table	SelectRows	2	2	1	step|val,each	yes	(Table, (Record) -> Boolean) -> Table	Table.SelectRows(prev, each predicate)
+Table	SelectRowsWithErrors	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.SelectRowsWithErrors(prev, {col,...})
+Table	SingleRow	1	1	1	step		(Table) -> Record	Table.SingleRow(prev)
+Table	Skip	2	2	1	step,int		(Table, Number) -> Table	Table.Skip(prev, n)
+Table	SplitAt	2	2	1	step,int		(Table, Number) -> List<Table>	Table.SplitAt(prev, n)
+Table	Column	2	2	1	step,str		(Table, Text) -> List<T>	Table.Column(prev, col) -> List<T>
+Table	ColumnNames	1	1	1	step|val		(Table) -> List<Text>	Table.ColumnNames(table) -- list of column names; accepts a step ref or any table-producing expression
+Table	ColumnsOfType	2	2	1	step|val,btypelist		(Table, List<Any>) -> List<Text>	Table.ColumnsOfType(prev, {type,...})
+Table	DemoteHeaders	1	1	1	step		(Table) -> Table	Table.DemoteHeaders(prev)
+Table	DuplicateColumn	3	3	1	step,str,str	yes	(Table, Text, Text) -> Table	Table.DuplicateColumn(prev, col, newCol)
+Table	HasColumns	2	2	2	step,cols|str		(Table, List<Text>) -> Boolean	Table.HasColumns(prev, {col,...} or "col")
+Table	Pivot	4	4	1	step,cols,str,str		(Table, List<Any>, Text, Text) -> Table	Table.Pivot(prev, {val,...}, attrCol, valCol)
+Table	PrefixColumns	2	2	1	step,str		(Table, Text) -> Table	Table.PrefixColumns(prev, prefix)
+Table	PromoteHeaders	1	1	1	step		(Table) -> Table	Table.PromoteHeaders(prev)
+Table	RemoveColumns	2	2	4	step,cols|str,missing?	yes	(Table, List<Text>) -> Table	Table.RemoveColumns(prev, {col,...}, optional MissingField.X)
+Table	ReorderColumns	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.ReorderColumns(prev, {col,...})
+Table	RenameColumns	2	2	1	step,rename	yes	(Table, List<Any>) -> Table	Table.RenameColumns(prev, {{old, new},...})
+Table	SelectColumns	2	2	4	step,cols|str,missing?	yes	(Table, List<Text>) -> Table	Table.SelectColumns(prev, {col,...}, optional MissingField.X)
+Table	TransformColumnNames	2	2	1	step,each		(Table, (Text) -> Text) -> Table	Table.TransformColumnNames(prev, each expr)
+Table	Unpivot	4	4	1	step,cols,str,str		(Table, List<Text>, Text, Text) -> Table	Table.Unpivot(prev, {col,...}, attrCol, valCol)
+Table	UnpivotOtherColumns	4	4	1	step,cols,str,str		(Table, List<Text>, Text, Text) -> Table	Table.UnpivotOtherColumns(prev, {col,...}, attrCol, valCol)
+Table	AddColumn	3	3	2	step,str,each,val?	yes	(Table, Text, (Record) -> T) -> Table	Table.AddColumn(prev, name, each expr, optional type)
+Table	AddFuzzyClusterColumn	3	3	1	step,str,str,rec?		(Table, Text, Text) -> Table	Table.AddFuzzyClusterColumn(prev, col, newCol, optional options)
+Table	AddIndexColumn	2	2	3	step,str,int?,int?	yes	(Table, Text) -> Table	Table.AddIndexColumn(prev, newCol, optional start, optional step)
+Table	AddJoinColumn	5	5	1	step,cols,step,cols,str,join?		(Table, List<Text>, Table, List<Text>, Text) -> Table	Table.AddJoinColumn(prev, {key}, other, {key}, newCol, optional JoinKind)
+Table	AddKey	3	3	1	step,cols,val		(Table, List<Text>, Any) -> Table	Table.AddKey(prev, {col,...}, isPrimary)
+Table	AggregateTableColumn	3	3	1	step,str,agg		(Table, Text, List<Any>) -> Table	Table.AggregateTableColumn(prev, col, {{name,each expr,type},...})
+Table	CombineColumns	4	4	1	step,cols,each,str		(Table, List<Text>, (List<Any>) -> Text, Text) -> Table	Table.CombineColumns(prev, {col,...}, each combiner, newCol)
+Table	CombineColumnsToRecord	3	3	1	step,cols,str		(Table, List<Text>, Text) -> Table	Table.CombineColumnsToRecord(prev, {col,...}, newCol)
+Table	ExpandListColumn	2	2	1	step,str		(Table, Text) -> Table	Table.ExpandListColumn(prev, col)
+Table	ExpandRecordColumn	3	3	1	step,str,cols		(Table, Text, List<Text>) -> Table	Table.ExpandRecordColumn(prev, col, {field,...})
+Table	ExpandTableColumn	3	3	2	step|val,val,cols,val?		(Table, Text, List<Text>) -> Table	Table.ExpandTableColumn(table, column, {col,...}, optional {newCol,...})
+Table	FillDown	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.FillDown(prev, {col,...})
+Table	FillUp	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.FillUp(prev, {col,...})
+Table	FuzzyGroup	3	3	1	step,cols,agg		(Table, List<Text>, List<Any>) -> Table	Table.FuzzyGroup(prev, {key,...}, {{name,each expr,type},...})
+Table	FuzzyJoin	5	5	1	step,cols,step,cols,join		(Table, List<Text>, Table, List<Text>, Any) -> Table	Table.FuzzyJoin(prev, {key}, other, {key}, JoinKind.X)
+Table	FuzzyNestedJoin	6	6	1	step,cols,step,cols,str,join		(Table, List<Text>, Table, List<Text>, Text, Any) -> Table	Table.FuzzyNestedJoin(prev, {key}, other, {key}, newCol, JoinKind.X)
+Table	Group	3	3	4	step|val,cols|str,agg,val?,val?		(Table, List<Text>, List<Any>) -> Table	Table.Group(prev, key|{key,...}, {{name,each expr,type},...} or {name,each expr,type}, optional groupKind, optional comparer)
+Table	Join	5	5	1	step,cols,step,cols,join		(Table, List<Text>, Table, List<Text>, Any) -> Table	Table.Join(prev, {key}, other, {key}, JoinKind.X)
+Table	Keys	1	1	1	step		(Table) -> List<Any>	Table.Keys(prev)
+Table	NestedJoin	6	6	1	step,cols,step,cols,str,join		(Table, List<Text>, Table, List<Text>, Text, Any) -> Table	Table.NestedJoin(prev, {key}, other, {key}, newCol, JoinKind.X)
+Table	PartitionKey	1	1	1	step		(Table) -> Any	Table.PartitionKey(prev)
+Table	ReplaceErrorValues	2	2	1	step,xform		(Table, List<Any>) -> Table	Table.ReplaceErrorValues(prev, {{col,value},...})
+Table	ReplaceKeys	2	2	1	step,cols		(Table, List<Text>) -> Table	Table.ReplaceKeys(prev, {key,...})
+Table	ReplacePartitionKey	2	2	1	step,str		(Table, Text) -> Table	Table.ReplacePartitionKey(prev, key)
+Table	ReplaceValue	4	4	1	step,val,val,each	yes	(Table, T, T, (T, T) -> Boolean) -> Table	Table.ReplaceValue(prev, old, new, each replacer)
+Table	Sort	2	2	1	step,sort	yes	(Table, List<Any>) -> Table	Table.Sort(prev, {{col, Order.Ascending},...})
+Table	Split	2	2	1	step,int		(Table, Number) -> List<Table>	Table.Split(prev, pageSize)
+Table	SplitColumn	3	3	1	step,str,each		(Table, Text, (Text) -> List<Text>) -> Table	Table.SplitColumn(prev, col, each splitter)
+Table	TransformColumns	2	2	2	step|val,xform,val?,missing?	yes	(Table, List<Any>) -> Table	Table.TransformColumns(prev, {{col,each expr},...}, optional defaultTransform, optional missingField)
+Table	TransformColumnTypes	2	2	2	step|val,typelist,culture|rec?	yes	(Table, List<Any>) -> Table	Table.TransformColumnTypes(prev, {{col,type},...}, optional culture)
+Table	TransformRows	2	2	1	step,each	yes	(Table, (Record) -> Record) -> Table	Table.TransformRows(prev, each expr)
+Table	Transpose	1	1	1	step		(Table) -> Table	Table.Transpose(prev)
+Table	Contains	2	2	1	step,rec,val?		(Table, Record) -> Boolean	Table.Contains(prev, [col=val,...], optional equationCriteria)
+Table	ContainsAll	2	2	1	step,reclist,val?		(Table, List<Record>) -> Boolean	Table.ContainsAll(prev, {[...],...}, optional equationCriteria)
+Table	ContainsAny	2	2	1	step,reclist		(Table, List<Record>) -> Boolean	Table.ContainsAny(prev, {[...],...})
+Table	Distinct	2	2	1	step,cols	yes	(Table, List<Text>) -> Table	Table.Distinct(prev, {col,...})
+Table	IsDistinct	1	1	1	step		(Table) -> Boolean	Table.IsDistinct(prev)
+Table	PositionOf	2	2	1	step,rec		(Table, Record) -> Number	Table.PositionOf(prev, [col=val,...])
+Table	PositionOfAny	2	2	1	step,reclist		(Table, List<Record>) -> List<Number>	Table.PositionOfAny(prev, {[...],...})
+Table	RemoveMatchingRows	2	2	1	step,reclist		(Table, List<Record>) -> Table	Table.RemoveMatchingRows(prev, {[...],...})
+Table	ReplaceMatchingRows	3	3	1	step,reclist,rec		(Table, List<Record>, Record) -> Table	Table.ReplaceMatchingRows(prev, {[old]}, [new])
+Table	AddRankColumn	3	3	1	step,str,sort,rec?		(Table, Text, List<Any>) -> Table	Table.AddRankColumn(prev, newCol, {{col,Order.X},...}, optional options)
+Table	Max	3	3	1	step,str,val		(Table, Text, Any) -> Record	Table.Max(prev, col, default)
+Table	MaxN	3	3	1	step,int,str		(Table, Number, Text) -> Table	Table.MaxN(prev, n, col)
+Table	Min	3	3	1	step,str,val		(Table, Text, Any) -> Record	Table.Min(prev, col, default)
+Table	MinN	3	3	1	step,int,str		(Table, Number, Text) -> Table	Table.MinN(prev, n, col)
+Table	Buffer	1	1	1	step	yes	(Table) -> Table	Table.Buffer(prev)
+Table	ConformToPageReader	1	1	1	step	yes	(Table) -> Table	Table.ConformToPageReader(prev)
+Table	StopFolding	1	1	1	step	yes	(Table) -> Table	Table.StopFolding(prev)
+Tables	GetRelationships	1	1	1	cols		(List<Table>) -> Table	Tables.GetRelationships({table,...})
+List	Count	1	1	1	step|val		(List<Any>) -> Number	List.Count(list) -> number of items in list
+List	IsEmpty	1	1	1	step|val		(List<Any>) -> Boolean	List.IsEmpty(list) -> true if list contains no items
+List	NonNullCount	1	1	1	step|val		(List<Any>) -> Number	List.NonNullCount(list) -> number of non-null items in list
+List	Alternate	3	3	2	step|val,int,int,int?		(List<T>, Number, Number) -> List<T>	List.Alternate(list, skip, take, optional offset) -> odd-numbered offset elements
+List	Buffer	1	1	1	step|val		(List<T>) -> List<T>	List.Buffer(list) -> buffers a list in memory
+List	Distinct	1	1	2	step|val,val?		(List<T>) -> List<T>	List.Distinct(list, optional equationCriteria) -> list with duplicates removed
+List	FindText	2	2	1	step|val,str		(List<Any>, Text) -> List<Any>	List.FindText(list, text) -> values (including record fields) containing text
+List	First	1	1	2	step|val,val?		(List<T>) -> T	List.First(list, optional default) -> first value or default if empty
+List	FirstN	2	2	1	step|val,val		(List<T>, Any) -> List<T>	List.FirstN(list, countOrCondition) -> first N items or items matching condition
+List	InsertRange	3	3	1	step|val,int,step|val		(List<T>, Number, List<T>) -> List<T>	List.InsertRange(list, index, values) -> list with values inserted at index
+List	IsDistinct	1	1	2	step|val,val?		(List<Any>) -> Boolean	List.IsDistinct(list, optional equationCriteria) -> true if no duplicates in list
+List	Last	1	1	2	step|val,val?		(List<T>) -> T	List.Last(list, optional default) -> last value or default if empty
+List	LastN	2	2	1	step|val,val		(List<T>, Any) -> List<T>	List.LastN(list, countOrCondition) -> last N items or items matching condition
+List	MatchesAll	2	2	1	step|val,each		(List<T>, (T) -> Boolean) -> Boolean	List.MatchesAll(list, condition) -> true if all values satisfy condition
+List	MatchesAny	2	2	1	step|val,each		(List<T>, (T) -> Boolean) -> Boolean	List.MatchesAny(list, condition) -> true if any value satisfies condition
+List	Positions	1	1	1	step|val		(List<Any>) -> List<Number>	List.Positions(list) -> list of offsets for the input list
+List	Range	2	2	2	step|val,int,int?		(List<T>, Number) -> List<T>	List.Range(list, offset, optional count) -> subset of list beginning at offset
+List	Select	2	2	1	step|val,each		(List<T>, (T) -> Boolean) -> List<T>	List.Select(list, each predicate) -> values matching condition
+List	Single	1	1	1	step|val		(List<T>) -> T	List.Single(list) -> the one item in a single-element list; error otherwise
+List	SingleOrDefault	1	1	2	step|val,val?		(List<T>) -> T	List.SingleOrDefault(list, optional default) -> single item or default for empty list
+List	Skip	2	2	1	step|val,val		(List<T>, Any) -> List<T>	List.Skip(list, countOrCondition) -> list with leading items removed
+List	Accumulate	3	3	1	step|val,val,each		(List<T>, U, (U, T) -> U) -> U	List.Accumulate(list, seed, (acc, x) => expr) -> accumulated summary value
+List	Combine	1	1	1	step|val		(List<List<T>>) -> List<T>	List.Combine({list1, list2, ...}) -> single combined list
+List	RemoveFirstN	2	2	1	step|val,val		(List<T>, Any) -> List<T>	List.RemoveFirstN(list, countOrCondition) -> list with first N elements removed
+List	RemoveItems	2	2	1	step|val,step|val		(List<T>, List<T>) -> List<T>	List.RemoveItems(list1, list2) -> list1 minus items present in list2
+List	RemoveLastN	2	2	1	step|val,val		(List<T>, Any) -> List<T>	List.RemoveLastN(list, countOrCondition) -> list with last N elements removed
+List	RemoveMatchingItems	2	2	2	step|val,step|val,val?		(List<T>, List<T>) -> List<T>	List.RemoveMatchingItems(list, values, optional equationCriteria) -> all occurrences removed
+List	RemoveNulls	1	1	1	step|val		(List<nullable T>) -> List<T>	List.RemoveNulls(list) -> list with all null values removed
+List	RemoveRange	2	2	2	step|val,int,int?		(List<T>, Number) -> List<T>	List.RemoveRange(list, index, optional count) -> list with range of values removed
+List	Repeat	2	2	1	step|val,int		(List<T>, Number) -> List<T>	List.Repeat(list, count) -> list repeated count times
+List	ReplaceMatchingItems	2	2	2	step|val,step|val,val?		(List<T>, List<List<T>>) -> List<T>	List.ReplaceMatchingItems(list, replacements, optional equationCriteria) -> replacements applied
+List	ReplaceRange	4	4	1	step|val,int,int,step|val		(List<T>, Number, Number, List<T>) -> List<T>	List.ReplaceRange(list, index, count, replaceWith) -> list with range replaced
+List	ReplaceValue	4	4	1	step|val,val,val,each		(List<T>, T, T, (T, T) -> Boolean) -> List<T>	List.ReplaceValue(list, oldValue, newValue, replacer) -> list with value replaced
+List	Reverse	1	1	1	step|val		(List<T>) -> List<T>	List.Reverse(list) -> list in reversed order
+List	Split	2	2	1	step|val,int		(List<T>, Number) -> List<List<T>>	List.Split(list, pageSize) -> list of sub-lists each of length pageSize
+List	Transform	2	2	1	step|val,each		(List<T>, (T) -> U) -> List<U>	List.Transform(list, each expr) -> new list of transformed values
+List	TransformMany	3	3	1	step|val,each,each		(List<T>, (T) -> List<U>, (T, U) -> R) -> List<R>	List.TransformMany(list, listTransform, resultTransform) -> flattened transformed list
+List	Zip	1	1	1	step|val		(List<List<Any>>) -> List<List<Any>>	List.Zip({list1, list2, ...}) -> list of lists combining items at same position
+List	AllTrue	1	1	1	step|val		(List<Boolean>) -> Boolean	List.AllTrue(list) -> true if all expressions are true
+List	AnyTrue	1	1	1	step|val		(List<Boolean>) -> Boolean	List.AnyTrue(list) -> true if any expression is true
+List	Contains	2	2	2	step|val,val,val?		(List<T>, T) -> Boolean	List.Contains(list, value, optional equationCriteria) -> true if list contains value
+List	ContainsAll	2	2	2	step|val,step|val,val?		(List<T>, List<T>) -> Boolean	List.ContainsAll(list, values, optional equationCriteria) -> true if list includes all values
+List	ContainsAny	2	2	2	step|val,step|val,val?		(List<T>, List<T>) -> Boolean	List.ContainsAny(list, values, optional equationCriteria) -> true if list includes any value
+List	PositionOf	2	2	2	step|val,val,val?,val?		(List<T>, T) -> Any	List.PositionOf(list, value, optional occurrence, optional equationCriteria) -> offset(s)
+List	PositionOfAny	2	2	2	step|val,step|val,val?,val?		(List<T>, List<T>) -> Number	List.PositionOfAny(list, values, optional occurrence, optional equationCriteria) -> first offset
+List	Difference	2	2	2	step|val,step|val,val?		(List<T>, List<T>) -> List<T>	List.Difference(list1, list2, optional equationCriteria) -> items in list1 not in list2
+List	Intersect	1	1	2	step|val,val?		(List<List<T>>) -> List<T>	List.Intersect(lists, optional equationCriteria) -> intersection of list values
+List	Union	1	1	2	step|val,val?		(List<List<T>>) -> List<T>	List.Union(lists, optional equationCriteria) -> union of list values
+List	Max	1	1	2	step|val,val?		(List<T>) -> T	List.Max(list, optional default) -> maximum value or default for empty list
+List	MaxN	2	2	2	step|val,val,val?		(List<T>, Any) -> List<T>	List.MaxN(list, countOrCondition, optional comparisonCriteria) -> maximum N values
+List	Median	1	1	2	step|val,val?		(List<T>) -> T	List.Median(list, optional comparisonCriteria) -> median value in list
+List	Min	1	1	2	step|val,val?		(List<T>) -> T	List.Min(list, optional default) -> minimum value or default for empty list
+List	MinN	2	2	2	step|val,val,val?		(List<T>, Any) -> List<T>	List.MinN(list, countOrCondition, optional comparisonCriteria) -> minimum N values
+List	Percentile	2	2	2	step|val,val,rec?		(List<T>, Any) -> Any	List.Percentile(list, percentiles, optional options) -> sample percentile(s)
+List	Sort	1	1	2	step|val,val?		(List<T>) -> List<T>	List.Sort(list, optional comparisonCriteria) -> sorted list
+List	Average	1	1	1	step|val		(List<Any>) -> Any	List.Average(list) -> average of number/date/datetime/datetimezone/duration values
+List	Mode	1	1	2	step|val,val?		(List<T>) -> T	List.Mode(list, optional equationCriteria) -> most frequently occurring value
+List	Modes	1	1	2	step|val,val?		(List<T>) -> List<T>	List.Modes(list, optional equationCriteria) -> list of most frequently occurring values
+List	StandardDeviation	1	1	1	step|val		(List<Any>) -> Any	List.StandardDeviation(list) -> sample-based standard deviation estimate
+List	Sum	1	1	1	step|val		(List<Any>) -> Any	List.Sum(list) -> sum of number or duration items
+List	Covariance	2	2	1	step|val,step|val		(List<Number>, List<Number>) -> Number	List.Covariance(list1, list2) -> covariance between two number lists
+List	Product	1	1	1	step|val		(List<Number>) -> Number	List.Product(list) -> product of numbers in list
+List	Dates	3	3	1	val,int,val		(Any, Number, Any) -> List<Any>	List.Dates(start, count, step) -> list of date values
+List	DateTimes	3	3	1	val,int,val		(Any, Number, Any) -> List<Any>	List.DateTimes(start, count, step) -> list of datetime values
+List	DateTimeZones	3	3	1	val,int,val		(Any, Number, Any) -> List<Any>	List.DateTimeZones(start, count, step) -> list of datetimezone values
+List	Durations	3	3	1	val,int,val		(Any, Number, Any) -> List<Any>	List.Durations(start, count, step) -> list of duration values
+List	Generate	3	3	2	val,each,each,val?		(T, (T) -> Boolean, (T) -> T) -> List<T>	List.Generate(initial, condition, next, optional selector) -> generated list
+List	Numbers	2	2	2	val,int,val?		(Number, Number) -> List<Number>	List.Numbers(start, count, optional increment) -> list of numbers
+List	Random	1	1	2	int,val?		(Number) -> List<Number>	List.Random(count, optional seed) -> list of random numbers between 0 and 1
+List	Times	3	3	1	val,int,val		(Any, Number, Any) -> List<Any>	List.Times(start, count, step) -> list of time values
+Text	Length	1	1	1	val		(Text) -> Number	Text.Length(text)
+Text	From	1	1	1	val		(Any) -> Text	Text.From(value)
+Text	Upper	1	1	1	val		(Text) -> Text	Text.Upper(text)
+Text	Lower	1	1	1	val		(Text) -> Text	Text.Lower(text)
+Text	Trim	1	1	1	val		(Text) -> Text	Text.Trim(text)
+Text	TrimStart	1	1	1	val		(Text) -> Text	Text.TrimStart(text)
+Text	TrimEnd	1	1	1	val		(Text) -> Text	Text.TrimEnd(text)
+Text	PadStart	3	3	1	val,int,str		(Text, Number, Text) -> Text	Text.PadStart(text,width,pad)
+Text	PadEnd	3	3	1	val,int,str		(Text, Number, Text) -> Text	Text.PadEnd(text,width,pad)
+Text	Contains	2	2	2	val,val,val?		(nullable Text, Text) -> nullable Boolean	Text.Contains(text, substring, optional comparer)
+Text	StartsWith	2	2	2	val,val,val?		(nullable Text, Text) -> nullable Boolean	Text.StartsWith(text, substring, optional comparer)
+Text	EndsWith	2	2	2	val,val,val?		(nullable Text, Text) -> nullable Boolean	Text.EndsWith(text, substring, optional comparer)
+Text	Start	2	2	1	val,int		(Text, Number) -> Text	Text.Start(text, count)
+Text	End	2	2	1	val,int		(Text, Number) -> Text	Text.End(text, count)
+Text	Range	3	3	1	val,int,int		(Text, Number, Number) -> Text	Text.Range(text,offset,count)
+Text	Replace	3	3	1	val,str,str		(Text, Text, Text) -> Text	Text.Replace(text,old,new)
+Text	Split	2	2	1	val,str		(Text, Text) -> List<Text>	Text.Split(text,delimiter)
+Text	Combine	1	1	2	step|val,val?		(List<Text>) -> Text	Text.Combine(list) or Text.Combine(list, separator)
+Number	From	1	1	1	val		(Any) -> Number	Number.From(value)
+Number	Round	1	1	3	val,int?,int?		(Number) -> Number	Number.Round(n), Number.Round(n, digits), Number.Round(n, digits, mode)
+Number	RoundUp	1	1	1	val		(Number) -> Number	Number.RoundUp(n)
+Number	RoundDown	1	1	1	val		(Number) -> Number	Number.RoundDown(n)
+Number	Abs	1	1	1	val		(Number) -> Number	Number.Abs(n)
+Number	Sqrt	1	1	1	val		(Number) -> Number	Number.Sqrt(n)
+Number	Power	2	2	1	val,val		(Number, Number) -> Number	Number.Power(base,exponent)
+Number	Log	1	1	1	val		(Number) -> Number	Number.Log(n)
+Number	Mod	2	2	1	val,val		(Number, Number) -> Number	Number.Mod(n,divisor)
+Number	Sign	1	1	1	val		(Number) -> Number	Number.Sign(n)
+Logical	From	1	1	1	val		(Any) -> Boolean	Logical.From(value)
+Logical	Not	1	1	1	val		(Boolean) -> Boolean	Logical.Not(b)
+Logical	And	2	2	1	val,val		(Boolean, Boolean) -> Boolean	Logical.And(a,b)
+Logical	Or	2	2	1	val,val		(Boolean, Boolean) -> Boolean	Logical.Or(a,b)
+Logical	Xor	2	2	1	val,val		(Boolean, Boolean) -> Boolean	Logical.Xor(a,b)

@@ -1,0 +1,47 @@
+{
+    "id":  "F08-HasColumns-002",
+    "rule":  "R-TBL-COL-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "Name",
+                                  "Dept",
+                                  "Salary"
+                              ],
+                              [
+                                  "Alice",
+                                  "HR",
+                                  "50000"
+                              ],
+                              [
+                                  "Bob",
+                                  "IT",
+                                  "40000"
+                              ],
+                              [
+                                  "Charlie",
+                                  "HR",
+                                  "60000"
+                              ],
+                              [
+                                  "Dora",
+                                  "IT",
+                                  "40000"
+                              ]
+                          ],
+                 "source":  "tx.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.HasColumns(Sheet1, {\"Salary\"})\r\nin\r\n    Result",
+    "description":  "HasColumns over a single existing column returns true",
+    "expect_ok":  {
+                      "columns":  [
+                                      "Value"
+                                  ],
+                      "rows":  [
+                                   [
+                                       "true"
+                                   ]
+                               ]
+                  }
+}

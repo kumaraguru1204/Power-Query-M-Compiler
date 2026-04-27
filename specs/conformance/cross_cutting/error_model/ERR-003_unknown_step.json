@@ -1,0 +1,9 @@
+{
+    "expect_err":  {
+                       "category":  "Diagnostics"
+                   },
+    "rule":  "R-ERR-RESOLVE",
+    "description":  "Reference to an unknown step is a Diagnostics error",
+    "id":  "ERR-003",
+    "formula":  "let Source = 0 in Missing"
+}

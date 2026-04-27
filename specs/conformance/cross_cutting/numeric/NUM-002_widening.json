@@ -1,0 +1,32 @@
+{
+    "id":  "NUM-002",
+    "rule":  "R-NUM-04",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "1",
+                                  "2.0"
+                              ],
+                              [
+                                  "3",
+                                  "4.0"
+                              ]
+                          ],
+                 "source":  "n.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.AddColumn(Sheet1, \"C\", each [A] + [B])\r\nin\r\n    Result",
+    "description":  "Integer + Float widens to Float",
+    "expect_ok":  {
+                      "columns":  [
+                                      "A",
+                                      "B",
+                                      "C"
+                                  ],
+                      "row_count":  2
+                  }
+}

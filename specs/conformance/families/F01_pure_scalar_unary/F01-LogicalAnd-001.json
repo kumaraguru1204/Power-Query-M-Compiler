@@ -1,0 +1,31 @@
+{
+    "id":  "F01-LogicalAnd-001",
+    "rule":  "R-OP-LOG-01",
+    "data":  {
+                 "sheet":  "S",
+                 "rows":  [
+                              [
+                                  "A",
+                                  "B"
+                              ],
+                              [
+                                  "true",
+                                  "false"
+                              ],
+                              [
+                                  "true",
+                                  "true"
+                              ]
+                          ],
+                 "source":  "b.xlsx"
+             },
+    "formula":  "let\r\n    Source = Excel.Workbook(File.Contents(\"x\")),\r\n    Sheet1 = Source{[Item=\"S\",Kind=\"Sheet\"]}[Data],\r\n    Result = Table.AddColumn(Sheet1, \"C\", each Logical.And([A], [B]))\r\nin\r\n    Result",
+    "description":  "Logical.And of two booleans",
+    "expect_ok":  {
+                      "columns":  [
+                                      "A",
+                                      "B",
+                                      "C"
+                                  ]
+                  }
+}
